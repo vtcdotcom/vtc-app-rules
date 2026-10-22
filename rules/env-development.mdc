@@ -1,0 +1,216 @@
+---
+description: Environment files — env_development, committed .env.production, platform-injected vars
+alwaysApply: false
+globs: "env_development,.env.production,.env.development"
+---
+
+# Environment — VTC Apps
+
+**Naming:** Use **`VTC_*`** env names for platform URLs. Legacy **`POSIF_*`** keys are still injected in parallel during migration — do not commit either in `.env.production`.
+
+## Three layers (do not duplicate)
+
+| Layer | Where | Agent rule |
+|-------|--------|------------|
+| **Local dev** | `env_development` → copy to `.env.development` (gitignored) | Document every var the app reads; include local values for platform-injected keys |
+| **App prod (git)** | `.env.production` — **committed**, not gitignored | **App-owned keys only** — accent, display name, Stripe, app-to-app URLs, map API keys |
+| **Platform inject** | build.vtc.com `/opt/generate-app` — **never commit** | `VTC_API_URL`, `DEEPINFRA_*`, realtime/chat/shell URLs — see table below |
+| **Build identity** | `apply_app_identity_env_vars` — **never commit** | `APP_NAME`, `NEXT_PUBLIC_APP_URL` — always overwritten |
+| **ZAPI per-app** | Dockerfile build step — **never commit** | `MONGODB_URI` |
+| **Publish UI** | Developer Environment tab — **not in git** | App secrets (Stripe, custom keys); cannot set reserved/platform keys |
+
+Merge order at deploy (`deployment.mdc`): Developer Environment → platform constants (override repo) → build identity (override name/URL) → `MONGODB_URI` in Docker build.
+
+## Workflow
+
+1. Edit `env_development`; copy to `.env.development` locally
+2. Put **only app-owned keys** in `.env.production`; commit and push
+3. Never hardcode production URLs in source — landing VTC path cards may use `https://vtc.com` (`landing-page.mdc`)
+4. No `NEXT_PUBLIC_` / `VITE_` on secrets
+
+---
+
+## Platform-injected at build (verified — do NOT commit)
+
+Source: `PLATFORM_INJECTED_ENV_KEYS` + mirrors in `get_platform_injected_env()` on **build.vtc.com** (server2). **Override** committed `.env.production`. Blocked from Developer Environment UI.
+
+| Variable | Production value | Notes |
+|----------|------------------|-------|
+| `VTC_API_URL` | `https://api.vtc.com` | **Canonical** — use in new code |
+| `POSIF_API_URL` | same | Legacy alias — injected in parallel until apps migrate |
+| `VITE_VTC_API_URL` | same | Static Vite — auto-mirrored at build |
+| `VITE_POSIF_API_URL` | same | Legacy static alias |
+| `DEEPINFRA_API_KEY` | (build server secret) | RAG — server only |
+| `DEEPINFRA_API_URL` | `https://api.deepinfra.com` | RAG |
+| `DEEPINFRA_INFERENCE_MODEL` | `Qwen/Qwen3-32B` (build server) | RAG chat |
+| `DEEPINFRA_EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | RAG embeddings |
+| `DEEPINFRA_RERANKER_MODEL` | `Qwen/Qwen3-Reranker-0.6B` | RAG rerank |
+| `STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` | Server URL rewrite (`storage.mdc`) |
+| `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` | Browser display URLs |
+| `VITE_STORAGE_PUBLIC_BASE_URL` | same | Auto-mirrored — static Vite |
+| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://maps.vtc.com/styles/basic-preview/style.json` | Self-hosted / platform map style (Next.js) |
+| `VITE_MAP_STYLE_URL` | same | Auto-mirrored — static map apps |
+| `MAPTILER_API_KEY` | (build server secret) | MapTiler Cloud — server reference |
+| `NEXT_PUBLIC_MAPTILER_API_KEY` | same | Auto-mirrored — Next.js browser |
+| `VITE_MAPTILER_API_KEY` | same | Auto-mirrored — static Vite |
+| `MAPTILER_STYLE_URL` | `https://api.maptiler.com/maps/streets-v2/style.json?key={key}` | Template with `{key}` placeholder |
+| `NEXT_PUBLIC_MAPTILER_STYLE_URL` | same | Auto-mirrored — Next.js |
+| `VITE_MAPTILER_STYLE_URL` | same | Auto-mirrored — static Vite |
+| `DEEPINFRA_CHAT_MODEL` | `openai/gpt-oss-120b-Turbo` | Fast chat / tool calls — the only LLM provider is DeepInfra (`ai-inference.mdc`) |
+| `DEEPINFRA_REASONING_EFFORT` | `low` | gpt-oss reasoning hint |
+| `AI_DEFAULT_PROVIDER` | `deepinfra` | Always `deepinfra`. Groq / Cerebras are retired: `GROQ_*`, `CEREBRAS_*`, `AI_GROQ_*`, `AI_CEREBRAS_*` are stripped from builds |
+| `AI_GUIDE_MODEL_ALLOWLIST` | (empty = DeepInfra gpt-oss-120b-Turbo + Qwen3-32B) | JSON catalog for Guide model picker |
+| `AI_DEEPGRAM_API_KEY` | (server secret) | Guide realtime voice — do not commit |
+| `NEXT_PUBLIC_WS_URL` | `wss://ws.vtc.com` | Socket.IO (Next.js) |
+| `NEXT_PUBLIC_SOCKET_IO_PATH` | `/socket.io` | Socket.IO |
+| `SOCKET_IO_URL` | internal relay (vRack) | Server-side emit |
+| `PUBLIC_CHAT_SERVER_URL` | `https://chat.vtc.com` | Chat REST |
+| `NEXT_PUBLIC_NETWORK_URL` | `https://app.vtc.com` | Shell / chat deep links |
+| `NEXT_PUBLIC_VTC_URL` | `https://vtc.com` | **Canonical** — landing marketing link |
+| `NEXT_PUBLIC_POSIF_URL` | same | Legacy alias — injected in parallel |
+
+**Build-injected identity** (always overwrite — omit from git):
+
+| Variable | Behaviour |
+|----------|-----------|
+| `APP_NAME` | → `module_code` (lowercase) |
+| `NEXT_PUBLIC_APP_URL` | → `https://{code}.apps.vtc.com` |
+| `APP_DEPLOYMENT_TYPE` | → `shared` if missing |
+| `APP_PORT` | from ZAPI if missing (local dev only; shard runtime ignores) |
+
+**ZAPI:** `MONGODB_URI` per app at Docker build — dedicated apps; shared publisher/`group=0` fallback only.
+
+### Metering prices (platform-injected — `platform-metering.mdc`)
+
+Space owner pays **2× wholesale** from personal wallet. Do not commit these — update on build server when provider rates change.
+
+| Variable | Default (USD) | Purpose |
+|----------|---------------|---------|
+| `CREDITS_CHARGE_MULTIPLIER` | `2` | User credits = wholesale_usd × 100 × multiplier (2× wholesale) |
+| `DEEPINFRA_CHAT_INPUT_PRICE_PER_M` | `0.15` | DeepInfra fast chat input / 1M — `openai/gpt-oss-120b-Turbo` |
+| `DEEPINFRA_CHAT_OUTPUT_PRICE_PER_M` | `0.60` | DeepInfra fast chat output / 1M |
+| `DEEPINFRA_INFERENCE_INPUT_PRICE_PER_M` | `0.08` | DeepInfra chat input / 1M — must match `DEEPINFRA_INFERENCE_MODEL` (`Qwen/Qwen3-32B`) |
+| `DEEPINFRA_INFERENCE_OUTPUT_PRICE_PER_M` | `0.28` | DeepInfra chat output / 1M — `Qwen/Qwen3-32B` |
+| `DEEPINFRA_EMBEDDING_PRICE_PER_M` | `0.01` | Embeddings / 1M — `Qwen/Qwen3-Embedding-0.6B` |
+| `DEEPINFRA_RERANKER_PRICE_PER_M` | `0.01` | Rerank / 1M — `Qwen/Qwen3-Reranker-0.6B` |
+
+**ZAPI speech/TTS** (server1 `/opt/zeresoft/.env` — not app build inject): `AI_SPEECH_MODEL`, `AI_SPEECH_USD_PER_MINUTE`, `AI_TTS_MODEL`, `AI_TTS_USD_PER_MILLION_CHARS` — see `platform-metering.mdc`.
+
+**Not metered:** MapTiler — platform absorbs tile cost until self-hosted tiling exists.
+
+---
+
+## Code — read ZAPI URL (`VTC_API_URL`)
+
+**New apps:** `VTC_API_URL` only. **Migrating apps:** accept legacy name until updated.
+
+```typescript
+// src/lib/env.ts — canonical helper (add to new apps)
+export function getVtcApiUrl(): string {
+  const url = process.env.VTC_API_URL ?? process.env.POSIF_API_URL
+  if (!url) throw new Error('Missing VTC_API_URL')
+  return url.replace(/\/$/, '')
+}
+```
+
+```typescript
+// Static Vite — browser
+const apiBase = import.meta.env.VITE_VTC_API_URL ?? import.meta.env.VITE_POSIF_API_URL
+if (!apiBase) throw new Error('Missing VITE_VTC_API_URL')
+```
+
+`@vtc/sdk`: `apiBaseUrl: getVtcApiUrl()` — install from `https://npm.vtc.com` (`vtc-packages.mdc`).
+
+---
+
+## Commit in `.env.production` (app-owned)
+
+| Variable | When |
+|----------|------|
+| `NODE_ENV=production` | Always |
+| `NEXT_PUBLIC_APP_ACCENT` | Optional app default accent (`ui.mdc` — URL `color` wins in shell) |
+| `NEXT_PUBLIC_APP_DISPLAY_NAME` | App title in shell / landing |
+| `APP_DEPLOYMENT_TYPE=dedicated` | Only true publisher-DB apps (`app-types.mdc`) |
+| Stripe / payment keys | App-specific |
+| App-to-app URLs | e.g. `WALLET_APP_URL` — env only, never hardcode |
+| Other app secrets | Custom APIs, webhooks |
+
+**Do not commit** (injected or overwritten): `VTC_API_URL`, `POSIF_API_URL`, `VITE_*` API/storage/map mirrors, `MAPTILER_*`, `NEXT_PUBLIC_MAPTILER_*`, `VITE_MAPTILER_*`, `AI_DEFAULT_*`, `MONGODB_URI`, all `DEEPINFRA_*`, storage/map platform vars, realtime/chat/shell vars, `APP_NAME`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_VTC_URL`, `NEXT_PUBLIC_POSIF_URL`.
+
+Do **not** commit `HETZNER_*` / internal MinIO credentials — production uses `@vtc/sdk/storage` + ZAPI (`storage.mdc`).
+
+---
+
+## Static Vite SPA (`runtime_type=static`)
+
+Build injects `VITE_VTC_API_URL` and `VITE_POSIF_API_URL` (same value). **Do not commit** either once deploy pipeline is current.
+
+| Variable | Commit? |
+|----------|---------|
+| `VITE_VTC_API_URL` / `VITE_POSIF_API_URL` | **No** — build mirrors from `VTC_API_URL` |
+| `VITE_STORAGE_PUBLIC_BASE_URL` | **No** — build mirrors storage CDN |
+| `VITE_MAP_STYLE_URL` | **No** — build mirrors platform map style |
+| `VITE_MAPTILER_API_KEY` / `VITE_MAPTILER_STYLE_URL` | **No** — build mirrors MapTiler key + style template |
+
+Read in code: `import.meta.env.VITE_VTC_API_URL` — `runtime-types.mdc`, `scaffold-checklist-static.mdc`.
+
+---
+
+## `env_development` (local template — committed)
+
+Required for every Next.js app:
+
+| Variable | Local example |
+|----------|---------------|
+| `MONGODB_DEV_URI` | `mongodb://localhost:27017/...` — must include `localhost` |
+| `APP_PORT` | Local `./start.sh` port |
+| `APP_NAME` | Module code — prod value injected at build |
+| `APP_DEPLOYMENT_TYPE` | `shared` or `dedicated` |
+
+**Local copies of platform-injected vars** (not committed to `.env.production`):
+
+| Variable | Local example |
+|----------|---------------|
+| `VTC_API_URL` | `https://api.vtc.com` |
+| `POSIF_API_URL` | same — optional legacy line for old code paths |
+| `MONGODB_URI` | Dedicated local DB only |
+| `DEEPINFRA_*` | RAG local dev — `ai-inference.mdc` |
+| `NEXT_PUBLIC_WS_URL` | `wss://ws.vtc.com` |
+| `NEXT_PUBLIC_SOCKET_IO_PATH` | `/socket.io` |
+| `SOCKET_IO_URL` | Internal relay |
+| `PUBLIC_CHAT_SERVER_URL` | `https://chat.vtc.com` |
+| `NEXT_PUBLIC_NETWORK_URL` | `https://app.vtc.com` |
+| `NEXT_PUBLIC_VTC_URL` | `https://vtc.com` |
+| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://maps.vtc.com/styles/basic-preview/style.json` — local dev without MapTiler key |
+| `STORAGE_PUBLIC_BASE_URL` | LAN MinIO IP — match `DEV_LAN_HOST` |
+| `USE_LOCAL_STORAGE`, `HETZNER_*` / `MINIO_*` | Local MinIO only |
+
+Static local template also: `VITE_VTC_API_URL=https://api.vtc.com`
+
+**Map apps — local dev:** MapTiler key/style are **platform-injected at build** — do not put in `env_development` or `.env.production`. For local map UI without MapTiler, use `NEXT_PUBLIC_MAP_STYLE_URL` / `VITE_TILE_STYLE_URL` → `https://tiles.vtc.com/styles/basic-preview/style.json` (`maps.mdc`).
+
+**Landing VTC links** — hardcode `https://vtc.com` allowed (`landing-page.mdc`). Optional overrides:
+
+| Variable | Default |
+|----------|---------|
+| `NEXT_PUBLIC_VTC_JOIN_URL` | `https://vtc.com` |
+| `NEXT_PUBLIC_VTC_CREATE_SPACE_URL` | `https://vtc.com` |
+| `NEXT_PUBLIC_VTC_CREATE_NETWORK_URL` | `https://vtc.com` |
+
+---
+
+## Platform API (ZAPI)
+
+- Never hardcode `api.vtc.com` — use `getVtcApiUrl()` / `VTC_API_URL`
+- Browser (Next.js): same-origin `/api/*` only
+- Shared prod DB: `GET ${getVtcApiUrl()}/api/v1/db/` + Bearer JWT
+
+## Missing vars
+
+```typescript
+function requireEnv(name: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`Missing required env: ${name}`)
+  return value
+}
+```

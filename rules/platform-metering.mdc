@@ -1,0 +1,331 @@
+---
+description: Platform metering — space owner pays 2× wholesale from personal wallet
+alwaysApply: false
+globs: "**/lib/*credit*.ts,**/lib/*billing*.ts,**/lib/deepinfra.ts,**/lib/llm.ts,**/api/**/ai/**,**/api/**/chat/**,**/api/**/screen-recordings/**,**/api/**/transcribe/**,**/api/**/revoice/**"
+---
+
+# Platform Metering — VTC Apps
+
+When an app uses **platform-injected** keys (DeepInfra — the only LLM provider), the **space owner** pays — first from their **shared allocation** (10 credits/day per living Space or Network they pay for), then from their **personal credits wallet** — not the member who clicked.
+
+**Private network:** if the current network is private (`community_type == 1`), **all charges — personal or space** (daily occupancy, metered AI, Guide, personal runtime, shared runtime/traffic, `POST /credits/charge`) debit the **network owner's** wallet instead. `group_id` on the ledger still names the child space or personal actor. Publisher-billable / dedicated apps stay on the publisher. Custom domains are included with the daily allocation. Members and staff do not see Credits or Earnings in the shell nav — only the network owner does. People is also omitted from the personal menu on a private network.
+
+**MapTiler** — platform absorbs map tile cost for now. Do not charge spaces for map sessions until a self-hosted tiling stack exists.
+
+`group_id` on the charge is for **ledger attribution** only. Debit **`payer_user_id`** = space owner (`role_type === 1`), or the private-network owner when the space sits under a private network.
+
+---
+
+## Credit math (2× wholesale)
+
+**1 credit = $0.01 USD.** User-facing charge:
+
+```
+wholesale_usd = (prompt_tokens / 1e6) * INPUT_PRICE_PER_M
+              + (completion_tokens / 1e6) * OUTPUT_PRICE_PER_M
+
+credits = round(wholesale_usd * 100 * CREDITS_CHARGE_MULTIPLIER)
+```
+
+Default **`CREDITS_CHARGE_MULTIPLIER=2`** (user pays **2× wholesale**). Set in `/opt/zeresoft/.env` (ZAPI) and `/opt/generate-app/.env` (build server) — do not commit per app.
+
+### Usage types
+
+Not all models bill per token. Pick the formula for the `usage_type`:
+
+| `usage_type` | Formula | Example models |
+|--------------|---------|----------------|
+| `tokens` | `(prompt/1e6)×INPUT + (completion/1e6)×OUTPUT` | gpt-oss-120b-Turbo, Qwen3-32B |
+| `tokens_embed` | `(tokens/1e6)×EMBED_PRICE` | Qwen3-Embedding |
+| `audio_minutes` | `(seconds/60)×SPEECH_USD_PER_MINUTE` | Voxtral-Mini-3B |
+| `characters` | `(chars/1e6)×TTS_USD_PER_M_CHARS` | Orpheus 3B |
+
+**Always prefer provider-reported wholesale** (`inference_status.cost`, token `usage`) over env estimates. Use env rates only for pre-flight estimates or when the provider omits cost.
+
+```typescript
+// src/lib/creditsPricing.ts — canonical (copy into apps with AI)
+export function getCreditsChargeMultiplier(): number {
+  const n = parseFloat(process.env.CREDITS_CHARGE_MULTIPLIER ?? '2')
+  return Number.isFinite(n) && n > 0 ? n : 2
+}
+
+export function roundCredits(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+export function creditsFromWholesaleUsd(wholesaleUsd: number): number {
+  if (!Number.isFinite(wholesaleUsd) || wholesaleUsd <= 0) return 0
+  return roundCredits(wholesaleUsd * 100 * getCreditsChargeMultiplier())
+}
+
+export function estimateTokenWholesaleUsd(
+  usage: { prompt_tokens: number; completion_tokens: number },
+  inputPerM: number,
+  outputPerM: number
+): number {
+  return (
+    (usage.prompt_tokens / 1_000_000) * inputPerM +
+    (usage.completion_tokens / 1_000_000) * outputPerM
+  )
+}
+
+export function creditsForTokenUsage(
+  usage: { prompt_tokens: number; completion_tokens: number },
+  inputPerM: number,
+  outputPerM: number
+): number {
+  const wholesale = estimateTokenWholesaleUsd(usage, inputPerM, outputPerM)
+  return creditsFromWholesaleUsd(wholesale)
+}
+```
+
+---
+
+## Wholesale price env vars (platform-injected — do NOT commit)
+
+Injected at build from `/opt/generate-app/.env`. Update prices there when providers change rates.
+
+| Variable | Default (USD / 1M tokens) | Provider / model |
+|----------|----------------------------|------------------|
+| `CREDITS_CHARGE_MULTIPLIER` | `2` | Markup on all metered usage (2× wholesale) |
+| `DEEPINFRA_CHAT_INPUT_PRICE_PER_M` | `0.15` | DeepInfra fast chat — `openai/gpt-oss-120b-Turbo` input (`DEEPINFRA_CHAT_MODEL`) |
+| `DEEPINFRA_CHAT_OUTPUT_PRICE_PER_M` | `0.60` | DeepInfra fast chat — `openai/gpt-oss-120b-Turbo` output |
+| `DEEPINFRA_INFERENCE_INPUT_PRICE_PER_M` | `0.08` | DeepInfra chat — `Qwen/Qwen3-32B` (see deepinfra.com/pricing) |
+| `DEEPINFRA_INFERENCE_OUTPUT_PRICE_PER_M` | `0.28` | DeepInfra chat — `Qwen/Qwen3-32B` |
+| `DEEPINFRA_EMBEDDING_PRICE_PER_M` | `0.01` | Embeddings — `Qwen/Qwen3-Embedding-0.6B` |
+| `DEEPINFRA_RERANKER_PRICE_PER_M` | `0.01` | Rerank — `Qwen/Qwen3-Reranker-0.6B` (when billed) |
+
+**App build inject** (`/opt/generate-app/.env` on server2). **ZAPI speech/TTS** uses separate vars on server1 — see table below.
+
+**DeepInfra rates are model-specific.** When `DEEPINFRA_INFERENCE_MODEL` (or embedding/reranker model) changes on the build server, update the matching `*_PRICE_PER_M` vars to match [deepinfra.com/pricing](https://deepinfra.com/pricing). Do not reuse Llama 3.1 8B rates for Qwen3-32B.
+
+### ZAPI speech / TTS prices (server1 — `/opt/zeresoft/.env`)
+
+Screen Recorder transcribe and re-voice run in ZAPI, not in child apps. Update when `AI_SPEECH_MODEL` or `AI_TTS_MODEL` changes.
+
+| Variable | Default (USD) | Model / unit |
+|----------|---------------|--------------|
+| `CREDITS_CHARGE_MULTIPLIER` | `2` | Same markup as apps |
+| `AI_SPEECH_MODEL` | `mistralai/Voxtral-Mini-3B-2507` | STT model id |
+| `AI_SPEECH_USD_PER_MINUTE` | `0.00100` | Voxtral — per audio minute (estimate fallback) |
+| `AI_TTS_MODEL` | `canopylabs/orpheus-3b-0.1-ft` | TTS model id |
+| `AI_TTS_USD_PER_MILLION_CHARS` | `7.0` | Orpheus — per 1M characters (estimate fallback) |
+
+ZAPI: `screen_recording_billing.py` → `MeteredChargeService.charge_space_owner` (not JWT user `credits/charge`).
+
+Groq and Cerebras are retired (2026-10-17): no `GROQ_*` / `CEREBRAS_*` price vars are injected. `meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo` (replaces Groq `llama-3.1-8b-instant`) is $0.02 / $0.04 per M — put those rates in app code if you use it.
+
+---
+
+## ZAPI metered charge (space owner wallet)
+
+**Server routes only** — never expose `ZAPI_INTERNAL_SECRET` to the browser.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/billing/metered-balance?group_id=` | Space owner spendable balance |
+| `POST /api/v1/billing/metered-balance-check` | Pre-check `minimum_credits` before LLM call |
+| `POST /api/v1/billing/metered-charge` | Debit space owner after successful usage |
+
+Auth: `X-Internal-Secret` = `ZAPI_INTERNAL_SECRET` (local `env_development`) / `BUILD_INTERNAL_SECRET` on platform.
+
+```typescript
+// src/lib/meteredCredits.ts — server-only ZAPI client
+import { creditsForTokenUsage, estimateTokenWholesaleUsd } from './creditsPricing'
+
+function getZapiBase(): string {
+  const url = process.env.VTC_API_URL?.trim() || process.env.POSIF_API_URL?.trim()
+  if (!url) throw new Error('VTC_API_URL is not configured')
+  return url.replace(/\/$/, '')
+}
+
+function getInternalSecret(): string {
+  const secret =
+    process.env.ZAPI_INTERNAL_SECRET?.trim() ||
+    process.env.BUILD_INTERNAL_SECRET?.trim()
+  if (!secret) throw new Error('ZAPI_INTERNAL_SECRET is not configured')
+  return secret
+}
+
+/** Price env per DeepInfra model — bill the model you actually called. */
+function priceEnvForModel(model: string): { input: string; output: string } {
+  const chatModel = process.env.DEEPINFRA_CHAT_MODEL || 'openai/gpt-oss-120b-Turbo'
+  if (model === chatModel || model.includes('gpt-oss')) {
+    return { input: 'DEEPINFRA_CHAT_INPUT_PRICE_PER_M', output: 'DEEPINFRA_CHAT_OUTPUT_PRICE_PER_M' }
+  }
+  return { input: 'DEEPINFRA_INFERENCE_INPUT_PRICE_PER_M', output: 'DEEPINFRA_INFERENCE_OUTPUT_PRICE_PER_M' }
+}
+
+export async function fetchSpaceOwnerSpendableCredits(groupId: string): Promise<number> {
+  const res = await fetch(
+    `${getZapiBase()}/api/v1/billing/metered-balance?group_id=${encodeURIComponent(groupId)}`,
+    { headers: { 'X-Internal-Secret': getInternalSecret(), Accept: 'application/json' }, cache: 'no-store' }
+  )
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body?.detail || body?.message || 'metered_balance_failed')
+  const data = body?.data ?? body
+  return Number(data?.spendable_credits ?? 0)
+}
+
+export async function assertSpaceOwnerSpendable(groupId: string, minimumCredits: number): Promise<void> {
+  const res = await fetch(`${getZapiBase()}/api/v1/billing/metered-balance-check`, {
+    method: 'POST',
+    headers: {
+      'X-Internal-Secret': getInternalSecret(),
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ group_id: groupId, minimum_credits: minimumCredits }),
+  })
+  if (res.status === 402) throw new Error('INSUFFICIENT_CREDITS')
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body?.detail || 'metered_balance_check_failed')
+  }
+}
+
+export async function chargeSpaceOwnerMetered(params: {
+  groupId: string
+  amountCredits: number
+  reason: string
+  idempotencyKey: string
+  networkId?: string
+  triggeredByUserId?: string
+  referenceType?: string
+  referenceId?: string
+  metadata?: Record<string, unknown>
+}): Promise<{ ledger_id?: string; balance_credits?: number }> {
+  if (params.amountCredits <= 0) return {}
+
+  const moduleCode = process.env.APP_MODULE_CODE?.trim() || process.env.APP_NAME?.trim()
+  const res = await fetch(`${getZapiBase()}/api/v1/billing/metered-charge`, {
+    method: 'POST',
+    headers: {
+      'X-Internal-Secret': getInternalSecret(),
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(moduleCode ? { 'X-Module-Code': moduleCode } : {}),
+    },
+    body: JSON.stringify({
+      group_id: params.groupId,
+      amount_credits: params.amountCredits,
+      reason: params.reason,
+      idempotency_key: params.idempotencyKey,
+      network_id: params.networkId,
+      triggered_by_user_id: params.triggeredByUserId,
+      reference_type: params.referenceType,
+      reference_id: params.referenceId,
+      metadata: params.metadata,
+      module_code: moduleCode,
+    }),
+  })
+
+  const body = await res.json().catch(() => ({}))
+  if (res.status === 402 || body?.detail === 'insufficient_credits') {
+    throw new Error('INSUFFICIENT_CREDITS')
+  }
+  if (!res.ok) throw new Error(body?.detail || 'metered_charge_failed')
+
+  return {
+    ledger_id: body.ledger_id,
+    balance_credits: body.balance_credits,
+  }
+}
+
+/** After successful LLM response — charge space owner from token usage. */
+export async function chargeSpaceOwnerForTokenUsage(params: {
+  groupId: string
+  networkId?: string
+  triggeredByUserId?: string
+  provider: 'deepinfra'
+  model: string
+  usage: { prompt_tokens: number; completion_tokens: number }
+  idempotencyKey: string
+  referenceId: string
+}): Promise<number> {
+  const keys = priceEnvForModel(params.model)
+  const inputPerM = parseFloat(process.env[keys.input] ?? '0')
+  const outputPerM = parseFloat(process.env[keys.output] ?? '0')
+  if (!inputPerM || !outputPerM) {
+    throw new Error(`${params.provider}_price_env_missing`)
+  }
+
+  const amount = creditsForTokenUsage(params.usage, inputPerM, outputPerM)
+  if (amount <= 0) return 0
+
+  const wholesale = estimateTokenWholesaleUsd(params.usage, inputPerM, outputPerM)
+  await chargeSpaceOwnerMetered({
+    groupId: params.groupId,
+    networkId: params.networkId,
+    triggeredByUserId: params.triggeredByUserId,
+    amountCredits: amount,
+    reason: `AI — ${params.model}`,
+    idempotencyKey: params.idempotencyKey,
+    referenceType: 'metered_ai',
+    referenceId: params.referenceId,
+    metadata: {
+      provider: params.provider,
+      model: params.model,
+      tokens_in: params.usage.prompt_tokens,
+      tokens_out: params.usage.completion_tokens,
+      wholesale_usd: wholesale,
+    },
+  })
+  return amount
+}
+```
+
+### Typical server route flow
+
+```typescript
+// Before LLM call
+await assertSpaceOwnerSpendable(user.group_id, 0.01)
+
+// ... call DeepInfra ...
+
+// After success — real usage from provider
+await chargeSpaceOwnerForTokenUsage({
+  groupId: user.group_id,
+  networkId: user.network_id,
+  triggeredByUserId: user.user_id,
+  provider: 'deepinfra',
+  model: 'openai/gpt-oss-120b-Turbo',
+  usage: completion.usage,
+  idempotencyKey: `ai:${user.group_id}:${messageId}`,
+  referenceId: messageId,
+})
+```
+
+`POST /api/v1/credits/charge` still debits the **JWT user** — use **metered-charge** for space-owner billing.
+
+---
+
+## When to charge
+
+| Usage | When to charge | Billing path |
+|-------|----------------|--------------|
+| LLM chat / completion | After successful response — token `usage` from provider | App → `metered-charge` |
+| RAG embed + rerank | After embed job + after inference — separate line items | App → `metered-charge` |
+| Screen Recorder STT (Voxtral) | After successful transcribe — `inference_status.cost` or duration estimate | ZAPI `screen_recording_billing` → space owner |
+| Screen Recorder TTS (Orpheus) | After successful re-voice — `inference_status.cost` or character estimate | ZAPI `screen_recording_billing` → space owner |
+| MapTiler basemap | **Not metered** — platform absorbs cost | — |
+| DeepInfra keys in apps | Server routes only — never browser | App → `metered-charge` |
+
+If provider returns no `usage` / `cost`, use env estimate for pre-check only; for actual charge prefer reported wholesale when available.
+
+---
+
+## Insufficient credits
+
+Return HTTP **402** with `insufficient_credits`. UI: tell user the **space owner** must top up credits (`https://vtc.com` wallet). Do not run the paid API call if pre-check fails.
+
+---
+
+## Related
+
+- `env-development.mdc` — injected keys + price vars
+- `ai-inference.mdc` — DeepInfra (the only LLM provider)
+- `jev-decisions.mdc` — TypeSafe Jev closed decisions (ZAPI only)
+- `maps.mdc` — MapTiler (no metering)
+- `scaffold-checklist.mdc` — copy `creditsPricing.ts` + `meteredCredits.ts`
+- ZAPI: `metered_charge_service.py`, `POST /api/v1/billing/metered-charge`

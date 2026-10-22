@@ -1,0 +1,28 @@
+---
+description: Save agent plans in the active workspace plans/ folder — never .cursor/plans or user home
+alwaysApply: true
+---
+
+# Plans directory — workspace-local
+
+When creating, updating, or saving implementation plans (including CreatePlan output):
+
+## Do
+
+- Save plans under **`plans/` in the workspace root you are working in** (the open project folder).
+  - Example: working in `~/apps/posif-svelte` → `~/apps/posif-svelte/plans/my-plan.md`
+  - Example: working in `~/api` → `~/api/plans/my-plan.md`
+- Use descriptive kebab-case filenames: `india-pragatio-k3s-lane.md`, `billing-meter-refactor.md`
+- Create `plans/` if it does not exist.
+- Keep one canonical copy per plan in that project's `plans/` folder.
+
+## Do not
+
+- Do **not** save plans to `~/.cursor/plans/` or other Cursor-internal paths.
+- Do **not** save plans outside the active workspace (e.g. home directory) unless the user explicitly names another project path.
+- Do **not** duplicate the same plan in both `.cursor/plans/` and `plans/` — workspace `plans/` only.
+
+## After saving
+
+- Tell the user the full path (e.g. `plans/india-pragatio-k3s-lane.md`).
+- Plans in `plans/` may be committed to git when the user asks — unlike `.cursor/`, which is usually gitignored.

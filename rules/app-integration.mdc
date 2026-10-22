@@ -1,0 +1,144 @@
+---
+description: Cross-app APIs, chat slash commands, and platform shell chat deep links
+alwaysApply: false
+---
+
+# App integration — chat commands & cross-app APIs
+
+Apps do **not** read or write **another app's private** collections (`{otherapp}_*`). Another app (or chat-server) adds data to them by calling the **target app’s HTTP API** with the **user’s JWT** forwarded.
+
+**Exception — Space Core Records** (`core-records.mdc`): shared customers/suppliers (`suite_clients`), items (`suite_items`), and invoices are read by every Space app through ZAPI and written through `/apps/suite/*` (`@vtc/suite-core`). Do not build an HTTP hop to Customers/Invoicing for those.
+
+## Three surfaces
+
+| Surface | Who calls | Pattern |
+|---------|-----------|---------|
+| **Chat commands** | User in VTC chat | `/appshortname ?` → chat-server → target `POST/GET /api/*` |
+| **Server** | Another VTC child app | `fetch` to `{TARGET}_APP_URL` + same JWT query params |
+| **Shell chat deeplink** | Child app → platform UI | `{PLATFORM_URL}/dashboard/chat/with/{userId}` — see below |
+
+## Platform chat deep links (child app → network chat)
+
+Child apps link **into the VTC shell** (posif-svelte repo), not `chat.vtc.com`. Chat REST/Socket.IO stays internal to the shell — `realtime.mdc`.
+
+| Path | Purpose |
+|------|---------|
+| `/dashboard/chat/with/{userId}` | Find or create a DM with that user, then open the room |
+| `/dashboard/chat/{roomId}` | Open an existing room by Mongo `_id` |
+
+`userId` is the platform user id — same value as JWT `user_id` / URL param `user`.
+
+**Env:** `NEXT_PUBLIC_PLATFORM_URL` — shell origin only (e.g. `https://app.vtc.com`, beta `https://beta.vtc.com`). Never hardcode.
+
+```typescript
+const shell = process.env.NEXT_PUBLIC_PLATFORM_URL!.replace(/\/$/, '')
+const otherUserId = '29457' // JWT user_id of the person to message
+const url = `${shell}/dashboard/chat/with/${encodeURIComponent(otherUserId)}`
+```
+
+When the app runs inside the shell iframe, resolve shell origin from `NEXT_PUBLIC_PLATFORM_URL`, `document.referrer`, or shell query params (`shell`, `parent`, `return`) — reference: `~/apps/barter/src/lib/platformShell.ts`.
+
+**Helpers (copy or import pattern):**
+
+```typescript
+export function getChatWithUserPath(otherUserId: string): string {
+  return `/dashboard/chat/with/${encodeURIComponent(otherUserId)}`
+}
+
+export function getChatWithUserUrl(otherUserId: string, shellOrigin: string): string {
+  return `${shellOrigin.replace(/\/$/, '')}${getChatWithUserPath(otherUserId)}`
+}
+```
+
+**Shell implementation:** `posif-svelte` → `src/lib/features/chat/open-chat.ts` (`getChatWithUserPath`, `openChatWithUser`), route `src/routes/(authenticated)/dashboard/chat/with/[userId]/+page.svelte`.
+
+**Auth:** User must be logged into the **shell** (`app.vtc.com` / `beta.vtc.com`). Unauthenticated visits redirect to `/login?redirect=…` with the chat path preserved. Child app JWT/localStorage is separate — do not assume opening the shell URL inherits the child app session (`auth-bootstrap.mdc`).
+
+**DM policy:** Creation may be blocked by network DM scope — handle errors in UI; see `posif-svelte/docs/dm-policy-api-spec.md`.
+
+## Canonical server call (app → app)
+
+1. Env: `{TARGET}_APP_URL` (server only). Example: `KANBAN_APP_URL=https://kanban.vtc.com`
+2. Build URL with auth query params (required):
+
+```typescript
+const base = process.env.KANBAN_APP_URL!.replace(/\/$/, '')
+const url = new URL('/api/tasks', `${base}/`)
+url.searchParams.set('token', userJwt)
+url.searchParams.set('user', user.user_id)
+url.searchParams.set('group', user.group_id === '0' ? '0' : user.group_id)
+```
+
+3. `POST` JSON body; use standard envelope from `api-routes.mdc`:
+
+```typescript
+const res = await fetch(url, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${userJwt}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ boardId, name }),
+})
+const result = await res.json()
+if (!result.success) throw new Error(result.error)
+```
+
+4. Implement client in `src/lib/{target}Client.ts` (server-side only). Proxy from your app’s `/api/*` if the browser must not see `{TARGET}_APP_URL`.
+
+**Reference:** `suggestions/src/lib/kanbanClient.ts`, `chat-server/src/services/kanbanClient.ts`
+
+## Kanban — commands & write APIs (today)
+
+**Chat** (private — reply only to sender; register app in chat-server `PRIVATE_COMMAND_APPS`):
+
+```
+/kanban ?                          — help
+/kanban boards                     — list boards
+/kanban link <board>               — default board for add
+/kanban add <title>                — task on default board
+/kanban add <title> to <board>     — task on named board
+```
+
+**HTTP** (any server with user JWT):
+
+| Method | Path | Body / params |
+|--------|------|----------------|
+| GET | `/api/boards` | — |
+| POST | `/api/tasks` | `{ boardId, name, status?, subSteps?, addedBy? }` |
+
+## Suggestions — commands & write APIs
+
+**Chat** (private; `PRIVATE_COMMAND_APPS`):
+
+```
+/suggestions ?                              — help
+/suggestions add <title>                    — submit idea
+/suggestions add <title> — <details>        — with optional body
+/suggestions list                           — top open by votes
+/suggestions promote <id or title> to <board> — admin → Kanban task
+```
+
+**HTTP:**
+
+| Method | Path | Body |
+|--------|------|------|
+| GET | `/api/suggestions/list` | `filter`, `sort`, `limit` |
+| POST | `/api/suggestions/create` | `{ title, body?, source? }` |
+| POST | `/api/suggestions/promote` | `{ suggestionId, boardId }` (admin) |
+
+## Adding a new integratable app
+
+1. **Expose** list/create (and other writes) under `src/app/api/` — `api-routes.mdc` layout.
+2. **Document** chat subcommands in a `?` help string (`/appshortname ?`).
+3. **Chat-server:** `parseSlashCommand` → handler in `commands/{app}Command.ts` → `{app}Client.ts`; add app to `PRIVATE_COMMAND_APPS` if replies must not hit the room.
+4. **Consumers:** add `{APP}_APP_URL` to `env_development` + committed `.env.production` / `env_production`.
+5. **Client deep links only:** `NEXT_PUBLIC_{APP}_APP_URL` — never put API keys or server-only URLs in `NEXT_PUBLIC_*`.
+
+## Rules
+
+- Never read another app’s private MongoDB collections directly. Core Records (`core-records.mdc`) are shared on purpose — use `@vtc/suite-core`.
+- Never hardcode `*.posif.com` — use env (`env-development.mdc`).
+- Permissions are enforced by the **target** app from JWT (`role_type`, board access, etc.).
+- Browser clients call **same-origin** `/api/*` only; cross-app calls are server-side.
+
+## Planned
+
+- **Suggestions chat:** `/suggestions ?`, `add`, `list`, `promote` — implemented in chat-server; see `suggestionsCommand.ts`.

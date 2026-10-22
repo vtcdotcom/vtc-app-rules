@@ -1,0 +1,85 @@
+---
+description: Network branding policy — admin-controlled accent scope and app typography
+alwaysApply: false
+globs: "**/network-branding*,**/ThemeProvider*,**/themeFonts*,**/shell-brand-color*,**/child-app-theme*,**/LayoutContent.tsx"
+---
+
+# Network Branding — VTC Platform
+
+Network admins configure branding in **Network settings** (shell → network profile → Branding policy). The platform does **not** hardcode private vs public behavior — defaults are suggested; the admin decides.
+
+## Network settings (ZAPI `network_settings`)
+
+| Field | Values | Purpose |
+|-------|--------|---------|
+| `branding_scope` | `network` \| `space` \| `hybrid` | Who controls accent color |
+| `app_typography` | `platform` \| `network` | Child app font: VTC standard vs network font |
+| `network_font` | See `NETWORK_FONT_IDS` in `@vtc/client` | Font when `app_typography=network` |
+
+**`network_font` values:** `system`, `lato`, `inter`, `geist`, `manrope`, `plus-jakarta-sans`, `nunito-sans`, `poppins`, `dm-sans`, `atkinson-hyperlegible` (Google Fonts loaded on demand in child apps).
+| `allow_space_theme_color` | boolean | Whether child spaces may set accent |
+
+**Suggested defaults** (when unset — applied in shell `resolveNetworkBranding()`):
+
+| Network type | `branding_scope` | `app_typography` | `network_font` | `allow_space_theme_color` |
+|--------------|------------------|------------------|----------------|---------------------------|
+| Private | `network` | `network` | `lato` | `false` |
+| Public / open | `space` | `platform` | `system` | `true` |
+
+## Accent scope
+
+| Scope | Shell chrome | Child apps (`?color=`) |
+|-------|--------------|------------------------|
+| `network` | Network color only | Network color |
+| `space` | Space color when set | Space color → network fallback |
+| `hybrid` | Network color on rail | Space accent in apps; network in shell |
+
+Shell: `syncShellBrandFromActiveSpace()` uses `isSpaceAccentAllowed()` — not hardcoded private-network checks.
+
+## Child app URL params (shell → iframe)
+
+Shell appends on every embed (`child-app-theme-params.ts`):
+
+| Param | When | Child app |
+|-------|------|-----------|
+| `color` | Always (resolved from scope) | `--app-accent*` via `ThemeProvider` |
+| `typography` | `platform` \| `network` | Font policy |
+| `font` | When `typography=network` | Network font id → `--app-font-family` (see `@vtc/client` `NETWORK_FONT_IDS`) |
+| `mode`, `lang` | As before | Dark/light, i18n |
+| `tz` | User timezone preference (IANA) | Display times — `resolveUserTimeZone()` (`@vtc/client` ≥ 1.2.2) |
+
+**Persist** with `preserveThemeParams()` / `addTokenToUrl()` from `@vtc/client` (v1.2.2+ for `tz` / `posif_tz`).
+
+## Child apps — implementation
+
+1. **`@vtc/client`** — `preserveThemeParams`, `addTokenToUrl`, `resolveAppFontFamily`, `NETWORK_FONT_STACKS`
+2. **`src/lib/themeFonts.ts`** — `applyAppTypographyToDocument()` (loads Google Font when needed via `getNetworkFontGoogleHref`)
+3. **`ThemeProvider`** — accepts `typography` + `font`; sets accent + font on `<html>`
+4. **`globals.css`** — `@theme { --font-sans: var(--app-font-family, …) }` and `body { @apply font-sans }`
+
+**Platform floor:** type **scale** (`text-sm`, `text-2xl`, etc.) stays per `ui.mdc` — only **font family** changes with network policy. Do not import ad-hoc fonts in components.
+
+## Resolution order (accent — unchanged)
+
+1. URL `color` (shell-injected)
+2. `NEXT_PUBLIC_APP_ACCENT`
+3. Persisted `posif_color`
+4. VTC Blue `#004A80`
+
+## Code map
+
+| Layer | Path |
+|-------|------|
+| ZAPI schema | `api/src/zapi/api/schemas/networks.py` |
+| ZAPI defaults | `api/src/zapi/services/branding_helpers.py` |
+| Shell policy | `apps/app/src/lib/features/groups/network-branding.ts` |
+| Embed URL | `apps/app/src/lib/features/groups/child-app-theme-params.ts` |
+| Admin UI | `apps/app/src/lib/features/groups/NetworkBrandingSettings.svelte` |
+| Reference app | `apps/jobs` — `themeFonts.ts`, `LayoutContent.tsx` |
+
+## Related
+
+- `ui.mdc` — type scale, accent tokens, dual theme
+- `auth-bootstrap.mdc` — URL params on app open
+- `lib-canonical.mdc` — `@vtc/client` theme helpers
+- `vtc-packages.mdc` — `@vtc/client` 1.1.0+

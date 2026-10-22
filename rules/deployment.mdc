@@ -1,0 +1,275 @@
+---
+description: Docker and platform deploy requirements for VTC apps — auto deploy for publisher mini-apps on *.apps.vtc.com
+globs: next.config.ts,next.config.js,Dockerfile
+alwaysApply: false
+---
+
+# Deployment — VTC Apps
+
+## Runtime types
+
+| `runtime_type` | Build | Serve |
+|----------------|-------|-------|
+| `nextjs` (default) | Docker image, `next build` | k3s pod |
+| `static` | `vite build` → `dist/` | Object storage + CDN at subdomain |
+
+Both use `hosting_platform=internal` — shell injects `?token=&user=&group=…`. See `runtime-types.mdc`. Infrastructure hostnames: https://vtc.com/developers.
+
+## VTC publisher mini-apps (`{code}.apps.vtc.com`) — automatic deploy
+
+Publisher mini-apps run at **`https://{module_code}.apps.vtc.com`** (k3s on server2). **Deployment is fully automatic** — agents must **not** ask the user to deploy, SSH, or run manual release steps after a normal `git push`. Legacy `*.posif.com` and bare `{code}.vtc.com` hosts are wrong for publisher apps — see `publisher-apps-vtc-shards.mdc`.
+
+### Pipeline — Next.js (`runtime_type=nextjs`)
+
+1. **Git push** to the app’s remote (e.g. `main` / `master` as configured for that app).
+2. **build.vtc.com** — platform detects the push and starts a Docker image build for that subdomain app.
+3. **Env merge** — during the build, the platform merges (see **Platform-injected env** below):
+   - **Committed `.env.production`** from the app repo (app-specific keys only)
+   - **Per-app secrets** from ZAPI (`MONGODB_URI` for dedicated / publisher DB)
+   - **Platform constants** from the build service (`VTC_API_URL`, legacy `POSIF_API_URL`, `DEEPINFRA_*`, realtime vars, `PUBLIC_CHAT_SERVER_URL`, `NEXT_PUBLIC_NETWORK_URL`, `NEXT_PUBLIC_VTC_URL`) — override stale repo values
+4. **Image build** — `npm ci` → `npm run build` inside the container (with merged env).
+5. **k3s** — image updated on cluster; app served at `https://{module_code}.apps.vtc.com` (publisher lane).
+
+### Pipeline — static SPA (`runtime_type=static`)
+
+1. **Git push** to the app repo.
+2. **build.vtc.com** — `npm ci` → `npm run build` (Vite).
+3. **Env merge** — `VITE_*` from `.env.production` + Developer Environment tab (no `MONGODB_URI`).
+4. **Upload** — `dist/` synced to object storage (`users/{owner_id}/apps/{module_code}/` or legacy `apps/{module_code}/`).
+5. **Serve** — `https://{module_code}.apps.vtc.com` via `static-apps-gateway` on k3s (S3 prefix + ingress route).
+
+**DNS (main VTC network):** new app subdomains use **`k3s.vtc.com`** as the CNAME target (grey cloud). Legacy `k3s.posif.com` points at the same IP — do not use for new entries.
+
+**Auto-detect on deploy (build.vtc.com):** even if `runtime_type` is still `nextjs` in MySQL, the build server routes **`vite`**, **`svelte`**, and **`react`** (CRA) repos to the **static lane** (S3 + `static-apps-gateway`) and syncs `runtime_type=static` back to ZAPI. Static apps are **never** assigned to publisher shards.
+
+Shell auth injection is identical to Next.js internal apps.
+
+### `.env.production` — commit, do not gitignore
+
+- **`.env.production` must be committed and pushed** — it is **not** gitignored (only `.env`, `.env.development`, `.env*.local` are local).
+- At deploy, platform **merges** repo `.env.production` with injected platform vars — see `env-development.mdc`.
+- After fixing production config (new API keys, secrets), **commit + push** is sufficient; do not ask the user to manually copy env to a server.
+
+### Agent rules (subdomain apps)
+
+| Do | Do not |
+|----|--------|
+| Commit and push code + `.env.production` changes | Ask “should I deploy?” or “want me to deploy?” after push |
+| Run `npm run build` locally to verify before push | SSH to k3s or build.vtc.com unless user explicitly asks |
+| Mention that push triggers auto-deploy **once** if relevant | Suggest manual Docker/k3s steps for routine app updates |
+| Use `deploy-platform.mdc` only for **shell/API** (`posif-svelte`, `dev` ZAPI) | Conflate subdomain apps with beta/live Hetzner deploy scripts |
+
+**Exception:** User explicitly asks to investigate a failed build on build.vtc.com, debug k3s, or deploy shell/API — then follow `deploy-platform.mdc` / user instructions.
+
+---
+
+## Docker build details
+
+The platform builds Docker images from the app repo and runs `npm run build` inside the container. Push target: **`registry.vtc.com/{app}:tag`** (aliases **`docker.vtc.com`**, legacy **`docker.posif.com`** on k3s mirrors).
+
+## `next.config` — standalone output (required)
+
+Always set `output: 'standalone'` **inside** the config object from the first commit:
+
+```typescript
+import type { NextConfig } from 'next'
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+}
+
+export default nextConfig
+```
+
+**Do not** leave an empty object:
+
+```typescript
+// ❌ Breaks Docker build — platform injects a line after `{}` and causes a syntax error
+const nextConfig: NextConfig = {}
+```
+
+The deploy pipeline may append `output: "standalone"` after `= {}`, producing invalid TypeScript and failing `next run build`.
+
+## Scaffold checklist
+
+When bootstrapping a new app, include `output: 'standalone'` in `next.config.ts` (or `.js`) — see `scaffold-checklist.mdc`.
+
+## Local vs production env at build time
+
+- Platform merges per-app and platform-wide vars into `.env` / `.env.production` during the Docker build — see **Platform-injected env**.
+- App source must not hardcode production URLs or credentials — see `env-development.mdc`.
+- `env_development` is the dev template; `.env.production` holds **app-specific** keys only (not platform-injected vars — see table below).
+
+## Platform-injected env (build.vtc.com)
+
+**Build service:** `/opt/generate-app` on **build.vtc.com** (`docker_deployer.py` / `deployer.py`). Triggered by git push or ZAPI `POST …/api/deploy/docker`. Legacy hostname `build.posif.com` is the same host.
+
+After clone, before `npm run build`:
+
+1. **Developer Environment** (MySQL `PosifGroupAppProductionEnv`) — app-owner keys from the publish UI; cannot set reserved/platform keys.
+2. **`apply_production_env_vars`** — Developer Environment keys merged into `.env.production` (DB wins on collision except reserved keys).
+3. **`apply_platform_env_vars`** — constants from `/opt/generate-app/.env`; **overrides** same keys in committed `.env.production`.
+4. **`apply_app_identity_env_vars`** — canonical app identity; **overrides** stale repo values for name/URL (see **Build-injected identity** below).
+5. **`MONGODB_URI`** — per-app from ZAPI internal build API (`mong` field); written into `.env.production` and the generated Dockerfile `RUN` step.
+
+### Build-injected identity (`apply_app_identity_env_vars`)
+
+Runs on **every** Next.js and static deploy after platform env merge. Fixes a common **404-on-push** cause: wrong or missing `NEXT_PUBLIC_APP_URL` / `APP_NAME` in the built bundle.
+
+| Variable | Build behaviour | Notes |
+|----------|-----------------|-------|
+| `APP_NAME` | **Always set** to `module_code` (lowercase) | Must match subdomain (`shop` for `shop.apps.vtc.com`). Not a display title. |
+| `NEXT_PUBLIC_APP_URL` | **Always set** to `https://{host}` | Host from ZAPI `ingress_host` → `module_url` → `{code}.apps.vtc.com`. **Overrides** stale `*.posif.com` / wrong `*.vtc.com` in git. |
+| `APP_DEPLOYMENT_TYPE` | Set to `shared` **only if missing** | Use `dedicated` in repo only for true publisher-DB apps (`app-types.mdc`). |
+| `APP_PORT` | Set from ZAPI `port_number` **only if missing** | **Not used at shard runtime** (manifest port wins). Keep in `env_development` for local `./start.sh`. |
+
+**Patch:** `patch-generate-app-app-identity-env.sh` on build server (`/opt/generate-app/deployer.py`).
+
+### Shard rebuild commit-before-sync
+
+Publisher shard rebuilds call `deploy-remote.sh`, which **`git reset --hard`** when the repo is dirty. If shard assignment is only on disk (uncommitted), sync **wipes** it. Only the **trigger app** was re-assigned after sync — siblings dropped from the rebuilt pod → plain `404 page not found` on their hostnames.
+
+**Fix:** `patch-generate-app-shard-sync-order.sh` — commit `publisher_shards.json` / manifest **before** git sync in `_run_suite_rebuild`, and on first `assign_publisher_shard` in `ensure_suite_for_module`.
+
+Agents: a push **should** rebuild the shard automatically. If build logs show `Shard Rebuild completed` but the app 404s, compare disk vs pod manifest (`publisher-apps-vtc-shards.mdc`) — do not ask the user to manually rebuild unless the pipeline patch is missing.
+
+### What to commit in `.env.production` (app repo)
+
+| Commit | Examples |
+|--------|----------|
+| **Yes — app-specific** | `NODE_ENV=production`, `NEXT_PUBLIC_APP_ACCENT`, `NEXT_PUBLIC_APP_DISPLAY_NAME`, Stripe/app secrets, `APP_DEPLOYMENT_TYPE=dedicated`, app-to-app URLs |
+| **Optional — local parity** | `APP_PORT` (build fills if missing; shard runtime ignores it) |
+| **No — platform injects** | `VTC_API_URL`, `POSIF_API_URL`, `VITE_*` mirrors, `MAPTILER_*`, `AI_DEFAULT_*`, `MONGODB_URI`, `DEEPINFRA_*`, storage/map platform vars, realtime/chat/shell URLs |
+| **No — build overwrites** | `APP_NAME`, `NEXT_PUBLIC_APP_URL` — safe to omit from git; if present, must not use legacy `*.posif.com` (build fixes on next deploy) |
+
+### Platform constants (verified on build.vtc.com)
+
+Set in **`/opt/generate-app/.env`** on **server2** (`build.vtc.com`). Injected via `PLATFORM_INJECTED_ENV_KEYS` in `config.py` — **never** commit to app repos. **Override** committed `.env.production` on every deploy.
+
+| Variable | Purpose |
+|----------|---------|
+| `VTC_API_URL` | `https://api.vtc.com` — **canonical**; `@vtc/sdk` `getDb()`, credentials, members |
+| `POSIF_API_URL` | same — legacy alias injected in parallel until apps migrate |
+| `VITE_VTC_API_URL` / `VITE_POSIF_API_URL` | same — auto-mirrored for static Vite builds |
+| `DEEPINFRA_API_KEY` | Server-side RAG / inference only (`ai-inference.mdc`) |
+| `DEEPINFRA_API_URL` | `https://api.deepinfra.com` |
+| `DEEPINFRA_INFERENCE_MODEL` | Chat completion model id (build server: `Qwen/Qwen3-32B`) |
+| `DEEPINFRA_EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` |
+| `DEEPINFRA_RERANKER_MODEL` | `Qwen/Qwen3-Reranker-0.6B` |
+| `STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` — server URL rewrite (`storage.mdc`) |
+| `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` — browser display |
+| `VITE_STORAGE_PUBLIC_BASE_URL` | same — auto-mirrored for static Vite |
+| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://maps.vtc.com/styles/basic-preview/style.json` |
+| `VITE_MAP_STYLE_URL` | same — auto-mirrored for static map apps |
+| `MAPTILER_API_KEY` | MapTiler Cloud — mirrored to `NEXT_PUBLIC_*` / `VITE_*` |
+| `MAPTILER_STYLE_URL` | `https://api.maptiler.com/maps/streets-v2/style.json?key={key}` — mirrored to browser vars |
+| `DEEPINFRA_CHAT_MODEL` | `openai/gpt-oss-120b-Turbo` — fast chat / tool calls (replaced Cerebras) |
+| `DEEPINFRA_CHAT_INPUT_PRICE_PER_M` / `DEEPINFRA_CHAT_OUTPUT_PRICE_PER_M` | `0.15` / `0.60` |
+| `DEEPINFRA_REASONING_EFFORT` | `low` (gpt-oss) |
+| `AI_DEFAULT_PROVIDER` | always `deepinfra` (Groq and Cerebras retired 2026-10-17 — their vars are stripped from builds) |
+| `NEXT_PUBLIC_WS_URL` | `wss://ws.vtc.com` — browser Socket.IO (`realtime.mdc`) |
+| `NEXT_PUBLIC_SOCKET_IO_PATH` | `/socket.io` (default path) |
+| `SOCKET_IO_URL` | `(platform-injected internal URL)` — server-side emit from API routes (vRack → server1 relay) |
+| `PUBLIC_CHAT_SERVER_URL` | `https://chat.vtc.com` — chat REST API (shell + child apps; `realtime.mdc`) |
+| `NEXT_PUBLIC_NETWORK_URL` | `https://app.vtc.com` — shell login + chat deep links (`/dashboard/chat/…`) |
+| `NEXT_PUBLIC_VTC_URL` | `https://vtc.com` — marketing / “Explore VTC” on unauthenticated landing |
+| `NEXT_PUBLIC_POSIF_URL` | same — legacy alias injected in parallel |
+
+Unused `DEEPINFRA_*` vars in non-RAG apps are harmless. Realtime, chat, shell, storage, and map style vars are harmless in apps that do not use them.
+
+### Per-app secrets (not global)
+
+| Variable | When |
+|----------|------|
+| `MONGODB_URI` | **Dedicated** apps (fixed publisher DB). **Shared** apps: publisher / `group=0` fallback only — tenanted silos use SDK `getDb()` + `VTC_API_URL`, not env `MONGODB_URI`. |
+| Developer Environment keys | App-specific (e.g. `ZAPI_INTERNAL_SECRET`, custom model overrides) |
+
+### Not injected at app deploy
+
+| Concern | Production path |
+|---------|-----------------|
+| **Object storage** | `@vtc/sdk/storage` → `GET ${VTC_API_URL}/api/v1/credentials/` → **MinIO** (not `HETZNER_*` / not `MINIO_*` in `.env.production`). **Public `<img>` URLs:** commit `STORAGE_PUBLIC_BASE_URL` + `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` = `https://s3.vtc.com` — rewrite internal MinIO URLs (`storage.mdc`) |
+| **Private npm** | `NPM_VTC_PASSWORD_B64` in `/opt/generate-app/.env` — injected at Docker build (`--build-arg`) and host `npm ci` for `@vtc/*` from `https://npm.vtc.com` — `vtc-packages.mdc` |
+| **`VTC_API_URL` / `POSIF_API_URL` / `DEEPINFRA_*` / realtime / chat / shell URLs in git** | Remove from app `.env.production` — platform injects on every build |
+
+Agents: do **not** bulk-edit `VTC_API_URL` across app repos for deploy fixes — change the build service `.env` or redeploy.
+
+## Node version
+
+Match `package.json` engines (`node >=22 <23`) to the platform base image (`node:22-alpine`).
+
+## Platform Docker build (`registry.vtc.com/{app}:…`)
+
+The Dockerfile lives on the **build platform**, not in the app repo. A typical image build:
+
+1. `npm ci` — peer-dependency warnings from `eslint-config-next` vs `eslint@10` are **expected** and non-fatal.
+2. **`NPM_VTC_PASSWORD_B64`** — build server injects Verdaccio auth before `npm ci` when the app uses `@vtc/*` (`ensure_vtc_npmrc` in `generate-app`; set in `/opt/generate-app/.env`). Apps commit `.npmrc` with `${NPM_VTC_PASSWORD_B64}` placeholder — never the raw token.
+3. Platform writes `MONGODB_URI` into `.env` / `.env.production` for `next build` (secrets are injected at build time).
+4. `npm run build` → compile → **Running TypeScript** → static generation.
+
+### `context canceled` is not a TypeScript error
+
+If the log shows `✓ Compiled successfully` then `Running TypeScript ...` then `CANCELED` / `context canceled`, the build was **interrupted** (CI timeout, manual cancel, deploy pipeline abort) — not a type-check failure.
+
+A real TypeScript failure looks like:
+
+```
+Failed to compile.
+./src/...: Type error: ...
+```
+
+**Action:** Re-run the deploy/build. If it cancels repeatedly at the same step, increase build timeout or check build-server load — not app source unless `Failed to compile` appears.
+
+### Next.js 16 — Turbopack vs `webpack` config (common build failure)
+
+**Symptom** (at `npm run build` inside Docker):
+
+```
+ERROR: This build is using Turbopack, with a `webpack` config and no `turbopack` config.
+```
+
+**Cause:** Apps scaffolded with `dev-watch.mdc` add a dev-only `webpack` hook. Next.js 16 defaults production builds to Turbopack unless told otherwise.
+
+**Fix** (use both — reference `~/apps/jobs`):
+
+1. Add `turbopack: {}` to `next.config.ts` / `.js` next to the `webpack` hook.
+2. Set `"build": "next build --webpack"` in `package.json`.
+
+The `webpack` hook only runs `watchOptions` when `dev` is true — it does not affect production bundles. `turbopack: {}` satisfies Next.js 16; `--webpack` ensures Docker uses the same bundler if Turbopack defaults change.
+
+**Verify before push:**
+
+```bash
+grep -E 'turbopack|webpack' next.config.*
+grep '"build"' package.json
+npm run build
+```
+
+A follow-on `WorkerError: Call retries were exceeded` is usually the same clash — not a separate Docker issue.
+
+### Harmless Docker warnings
+
+- `FromPlatformFlagConstDisallowed: FROM --platform flag` — platform image template; safe to ignore unless the platform team changes base images.
+- `SecretsUsedInArgOrEnv: NPM_VTC_PASSWORD_B64` — expected; build server injects Verdaccio auth via `--build-arg` (`vtc-packages.mdc`).
+- `npm audit` / eslint peer warnings during `npm ci` — do not block the image build.
+
+### Env vars the platform must merge at build/runtime
+
+| Variable | Source | When needed |
+|----------|--------|-------------|
+| `VTC_API_URL`, `POSIF_API_URL`, `DEEPINFRA_*` | Build service `.env` | Every Next.js deploy — overrides repo |
+| `MONGODB_URI` | ZAPI per-app | Dedicated apps; shared publisher DB fallback |
+| `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_SOCKET_IO_PATH`, `SOCKET_IO_URL`, `PUBLIC_CHAT_SERVER_URL`, `NEXT_PUBLIC_NETWORK_URL`, `NEXT_PUBLIC_POSIF_URL` | Build service `.env` | Platform shell / realtime / chat — overrides repo |
+| `APP_NAME`, `NEXT_PUBLIC_APP_URL`, `APP_DEPLOYMENT_TYPE`, `APP_PORT` (if missing) | Build inject (`apply_app_identity_env_vars`) | Identity — overrides stale repo URL/name |
+| Other app-specific keys | Committed `.env.production` + Developer Environment | Per `env-development.mdc` |
+
+Document new **app-specific** keys in **`env_development`** (template) and **`.env.production`**. Do not document platform-injected or build-injected identity vars in app repos — see tables in **Build-injected identity** and **Platform constants**.
+
+### Local verification before push
+
+```bash
+npm run build
+```
+
+Must pass locally. Docker build runs the same `next build` with platform-injected `MONGODB_URI`.
+

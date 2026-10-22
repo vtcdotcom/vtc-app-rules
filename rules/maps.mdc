@@ -1,0 +1,177 @@
+---
+description: Maps — MapTiler basemap, tiles.vtc.com self-hosted tiles, Locations app, MapLibre, ZAPI
+alwaysApply: false
+globs: "**/*.{tsx,ts,jsx,js,svelte,vue}"
+---
+
+# Maps — MapLibre, MapTiler, Locations app
+
+**When:** location picker, space map, venue finder, embeddable “find us” map. **Not** turn-by-turn navigation (link out to Google/Apple Maps).
+
+**Human ops reference:** `~/ovh/MAPS.md` · **Locations app source:** `~/apps/map-explorer` (`https://git.vtc.com/zeresoft/maps.git`)
+
+---
+
+## Two hostnames (do not confuse)
+
+| Host | Role |
+|------|------|
+| **`maps.vtc.com`** | Static **Locations** app (Vite/React) — public map + admin CRUD UI |
+| **`tiles.vtc.com`** | **TileServer GL** — MapLibre `style.json`, TileJSON, vector `.pbf` tiles |
+| **`api.vtc.com`** | ZAPI — `/api/v1/public/map`, `/groups/{id}/locations`, `/map-config` |
+
+Browser loads **basemap** from MapTiler (production default) or optionally `tiles.vtc.com`. **Pin data** always from ZAPI.
+
+---
+
+## Basemap: MapTiler (production default)
+
+Production Locations app uses **MapTiler** `streets-v2` — reliable fonts, glyphs, and global coverage. Self-hosted `tiles.vtc.com` is optional and currently lacks font glyphs (labels break) unless TileServer fonts are fixed.
+
+### Env vars (Vite / static SPA)
+
+**Do not commit** MapTiler or platform map vars — build.vtc.com injects them (`env-development.mdc`). **Never** hardcode style URLs or API keys in components.
+
+| Variable | Purpose | Source |
+|----------|---------|--------|
+| `VITE_MAPTILER_API_KEY` | MapTiler Cloud API key | Platform inject |
+| `VITE_MAPTILER_STYLE_URL` | Style template with `{key}` placeholder | Platform inject |
+| `VITE_MAP_STYLE_URL` | Platform self-hosted style | Platform inject |
+| `VITE_TILE_STYLE_URL` | Self-hosted fallback (optional local dev) | `https://tiles.vtc.com/styles/basic-preview/style.json` |
+| `VITE_PREFER_SELF_HOSTED_TILES` | Set `true` to prefer `VITE_TILE_STYLE_URL` | omit or `false` in production |
+| `VITE_ZAPI_URL` / `VITE_VTC_API_URL` | Locations API | Platform inject |
+| `VITE_APP_PUBLIC_URL` | Embed / public links | Build identity / app-specific |
+
+### Style resolution (Locations app pattern)
+
+```typescript
+// ~/apps/map-explorer/src/lib/api.ts — tileStyleUrl()
+// 1. MapTiler if VITE_MAPTILER_API_KEY is set (default)
+// 2. Self-hosted only if VITE_PREFER_SELF_HOSTED_TILES=true
+// 3. On style error, hook may fall back from tiles.vtc.com → MapTiler
+```
+
+### Next.js apps (other products)
+
+| Runtime | Variable | Source |
+|---------|----------|--------|
+| Browser | `NEXT_PUBLIC_MAPTILER_API_KEY` | Platform inject |
+| Browser | `NEXT_PUBLIC_MAPTILER_STYLE_URL` | Platform inject |
+| Browser | `NEXT_PUBLIC_MAP_STYLE_URL` | Platform inject — `maps.vtc.com` style |
+| Browser | `NEXT_PUBLIC_TILE_STYLE_URL` | `https://tiles.vtc.com/styles/basic-preview/style.json` (optional local dev) |
+
+Use `maplibre-gl` (not Mapbox GL). Import CSS: `maplibre-gl/dist/maplibre-gl.css`.
+
+```typescript
+import maplibregl from 'maplibre-gl'
+
+const map = new maplibregl.Map({
+  container: ref.current!,
+  style: import.meta.env.VITE_MAPTILER_STYLE_URL!.replace('{key}', import.meta.env.VITE_MAPTILER_API_KEY!),
+  center: [-1.5491, 53.8008], // [lng, lat] — Leeds / GB default
+  zoom: 6,
+})
+```
+
+---
+
+## Self-hosted tiles (`tiles.vtc.com`)
+
+TileServer GL on server4 (internal network); public TLS via server4 edu-traefik or server1 Caddy → vRack.
+
+| Resource | URL |
+|----------|-----|
+| Style | `https://tiles.vtc.com/styles/basic-preview/style.json` |
+| TileJSON | `https://tiles.vtc.com/data/v3.json` |
+| Vector tiles | `https://tiles.vtc.com/data/v3/{z}/{x}/{y}.pbf` |
+
+Data id **`v3`** in TileServer config (MBTiles file `vtc.mbtiles`, Great Britain). **Do not** use `maps.vtc.com` for tile URLs.
+
+**Known issue:** `/fonts/...` on TileServer may return 400 — MapLibre labels fail. Prefer MapTiler for basemap until fonts are configured.
+
+**Do not** proxy tiles through app `/api/*` — browser fetches `tiles.vtc.com` or `api.maptiler.com` directly.
+
+---
+
+## Locations app (reference implementation)
+
+Per-space (group) pins + map config. A **network is a space** — use `space_id` / `group_id` (community id).
+
+### URLs
+
+| Mode | URL |
+|------|-----|
+| Public | `https://maps.vtc.com/?space_id={id}` or `?space={slug}` |
+| Admin (iframe in app.vtc.com) | `https://maps.vtc.com/?space_id={id}&token={JWT}&admin=1` |
+| Deep link | `?space_id={id}&location={slug}` |
+
+JWT from **app.vtc.com** login (`tag_api_v1`, `aud=zapi_server`). Token must be valid for `api.vtc.com`. **No** “dev token rejected” — same signing secret as production API.
+
+Static host has **no** `/admin` SPA fallback — admin is `/?admin=1&token=JWT` or `/admin?token=JWT`. **Token alone on `/` is public** (platform “open as user” may still pass `token`).
+
+### ZAPI (`https://api.vtc.com/api/v1`)
+
+| Method | Path | Auth |
+|--------|------|------|
+| GET | `/public/map?space_id=` / `?space=` / `?host=` | none |
+| GET/PUT | `/groups/{group_id}/map-config` | Bearer + space admin |
+| GET/POST | `/groups/{group_id}/locations` | Bearer + space admin |
+| PUT/DELETE | `/groups/{group_id}/locations/{id}` | Bearer + space admin |
+
+Mongo: `space_map_config`, `space_locations`. Location fields include `kind`, `color` (hex pin colour), `lat`, `lng`, address, etc.
+
+**CORS:** `api.vtc.com` must allow `*.vtc.com` origins (`CORS_ALLOWED_ORIGIN_REGEX` includes `vtc.com`). Admin fetches with `Authorization` trigger preflight.
+
+### Deploy Locations frontend
+
+Push to `zeresoft/maps` `main` → platform build → MinIO `users/1/apps/maps/`. Do not manual-upload `dist/` (gets overwritten).
+
+```bash
+cd ~/apps/map-explorer && npm run build && git push origin main
+```
+
+ZAPI locations routes live in `~/apps/dev/src/zapi` (`locations.py`, `locations_service.py`). Deploy ZAPI on server1 after API changes — see `~/ovh/MAPS.md`.
+
+### MapLibre pitfalls (Locations app)
+
+1. **Never set `transform` on `.maplibregl-marker` root** — MapLibre uses it for positioning; use `filter` / `z-index` for selected state.
+2. **Do not `flyTo` on map click** when placing pins — only user drag should pan.
+3. **Ignore map click after marker click** — same click bubbles to map and can start “add pin” mode.
+4. **No `window.confirm` in admin UI** — sandboxed iframes on app.vtc.com block modals; use in-panel confirm buttons.
+5. **Draft pin** — show preview marker before save (`__draft__` id); do not re-`fitBounds` on every draft coordinate change.
+
+### Pin colours (not icons)
+
+Default hex per `kind` (`poi`, `office`, `store`, …); user can override with custom colour. See `~/apps/map-explorer/src/lib/locationColors.ts`.
+
+---
+
+## Attribution (required on every map)
+
+MapTiler styles include required attribution in the style JSON; also show in app footer where applicable:
+
+- MapTiler: `© MapTiler` + `© OpenStreetMap contributors` (per MapTiler ToS)
+- Self-hosted OpenMapTiles: `© OpenMapTiles © OpenStreetMap contributors`
+
+Use i18n keys where the app is translated (`map.attribution`).
+
+---
+
+## App checklist (new map feature)
+
+1. Read this file + `~/ovh/MAPS.md` before coding
+2. MapTiler + platform map vars are **platform-injected at build** — do not add to `.env.production`; local dev may use `NEXT_PUBLIC_MAP_STYLE_URL` / `VITE_TILE_STYLE_URL` without MapTiler (`env-development.mdc`)
+3. Use `maplibre-gl`; handle loading / error / empty states (`ux-screens.mdc`)
+4. Pin **data** from ZAPI or your API — basemap from MapTiler (or optional self-hosted)
+5. Test inside **app.vtc.com iframe** (CORS, sandbox, no `confirm()`)
+6. Default view: entity coords or GB; `fitBounds` once on load, not on every pin edit
+
+---
+
+## Related rules
+
+- `env-development.mdc` — env file workflow
+- https://vtc.com/developers — public hostnames
+- `deploy-platform.mdc` — ZAPI on server1
+- `ui.mdc` — layout, dark mode
+- `auth-bootstrap.mdc` — `?token=` JWT in embedded apps

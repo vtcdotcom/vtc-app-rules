@@ -1,0 +1,63 @@
+---
+description: React and Next.js patterns — hooks, hydration, re-renders
+globs: **/*.tsx,**/*.ts
+alwaysApply: false
+---
+
+# React & Next.js Patterns — VTC Apps
+
+Auth bootstrap: `auth-bootstrap.mdc`. Prefer **API routes** over Server Actions for authenticated data (JWT in query param).
+
+## Rules of Hooks
+
+ALL hooks at top, before conditional returns.
+
+```typescript
+export default function MyPage() {
+  const hasAccess = useAdminAccess()
+  const [data, setData] = useState(null)
+  useEffect(() => { /* ... */ }, [])
+  if (hasAccess === null) return <LoadingSpinner />
+  if (hasAccess === false) return null
+  return <div>{/* JSX */}</div>
+}
+```
+
+## Auth on mount
+
+```typescript
+const [mounted, setMounted] = useState(false)
+useEffect(() => {
+  setMounted(true)
+  bootstrapAuthFromUrl()
+}, [])
+if (!mounted) return <LoadingSpinner />
+```
+
+## Re-render Loops
+
+Do not put `searchParams` / `router` in `useEffect` deps when navigating. Use ref guard + `window.location.href` for one-time redirects.
+
+## Hydration
+
+All `localStorage` / `window` access after `mounted` is true.
+
+## useEffect
+
+- Cleanup subscriptions/timers
+- `hasFetchedRef` to avoid double-fetch in strict mode
+
+## State
+
+Never mutate arrays/objects in place — spread/map/filter.
+
+## Next.js
+
+- Wrap `useSearchParams()` in `<Suspense>` at layout
+- `'use client'` for hooks and browser APIs
+- Dynamic params in Next.js 15+: `const { id } = await params`
+- **Avoid Server Actions for auth** unless token is explicitly passed; standard path is `fetch(addTokenToUrl('/api/...'))`
+
+## useAdminAccess (convention)
+
+Hook returns `null` (loading), `false` (denied), `true` (allowed). Fetch role from an API route using `addTokenToUrl`, or derive from client-known `posif_group` after bootstrap.

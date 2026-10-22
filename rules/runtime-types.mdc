@@ -1,0 +1,66 @@
+---
+description: Runtime type — Next.js, static Vite, or Expo native (VTC Store)
+alwaysApply: false
+---
+
+# Runtime Types — VTC Child Apps
+
+**Hosting** (`hosting_platform`) and **runtime** (`runtime_type`) are separate axes.
+
+| `hosting_platform` | `runtime_type` | Deploy | Shown in VTC shell search | Auth |
+|--------------------|----------------|--------|----------------------------|------|
+| `internal` | `nextjs` | k3s Node pod | Yes | Shell `?token=` |
+| `internal` | `static` | S3 + CDN at `code.apps.vtc.com` | Yes | Shell `?token=` |
+| `internal` | `react_native` | apk-factory → VTC Store | **No** (Store only) | Store session |
+| `external` | — | BYO HTTPS URL | Yes (open in tab) | **No** shell inject |
+
+Set **`hosting_platform`** in VTC core create-app as **Hosted on VTC** or **External** only. Native listings, thin-client wraps, and space/domain Android clients are created in the **VTC Store Publish tab**.
+
+Web runtimes (`nextjs` / `static`) are inferred from `package.json` on **first git push**. **`react_native` is chosen in the Store** and must not be overwritten by generate-app inference.
+
+## Decision tree
+
+**Default to static Vite.** ZAPI app services cover uploads (presign), AI chat/embeddings/rerank, transactional email, public reads, atomic counters/votes, and scheduled webhooks — see `nextjs-to-vite.mdc`.
+
+1. Need camera, mic, offline-first native UI, or other device APIs a WebView cannot do? → **Expo** (`react_native`) — `scaffold-checklist-native.mdc`. Catalog row is Store-only.
+2. Need SSR/SEO, server-only third-party secrets, heavy server compute (Sharp/docling/ffmpeg), or custom Mongo aggregations? → **Next.js** (`next` in dependencies)
+3. Otherwise: **browser-only** UI calling ZAPI with JWT from URL → **Vite/Svelte/CRA** → platform sets **`static`** automatically. Optional Android install = WebView wrapper, not this runtime.
+4. App hosted outside VTC with no shell params? → **`external`** at create (rare)
+
+Store wishlist approval uses this tree as the Jev `runtime` choice (`jev-decisions.mdc`). Automated Builder start only when that choice is a confident `static` and the autobuild noul is yes.
+
+## Static SPA rules
+
+- **Vite + React** (or Svelte) — no Next.js, no `src/app/api/`
+- Auth: `auth-bootstrap.mdc` — read `token`, `user`, `group` from URL on boot
+- Data: call **`VTC_API_URL`** (`https://api.vtc.com`) from the browser with `?token=` — use `import.meta.env.VITE_VTC_API_URL` (`env-development.mdc`)
+- **No** `MONGODB_URI`, **no** server `connectTenantDb()` / `connectDB()` in the app repo
+- Env at build: `VITE_*` only (see `env-development.mdc`)
+- Deploy: `vite build` → platform uploads `dist/` to object storage
+- i18n, Tailwind v4, dual theme — same as Next apps (`i18n.mdc`, `ui.mdc`)
+- Promotional landing **required** when there is no JWT (`?token=` / `posif_token`) — same `landing-page.mdc` format as Next.js. Do not show a missing-token error or in-app OTP/login.
+
+## Expo / React Native rules
+
+- Create with `~/cursor_rules/scripts/new-native.sh` then `scaffold-checklist-native.mdc`
+- Package id `com.vtc.{code}` in `app.json`; `versionCode` in the repo is a floor — factory increments it on each Store APK build
+- Distributed by apk-factory (`build_type: native`) + VTC Store — **not** `{code}.apps.vtc.com`
+- Hidden from VTC shell app search / add-app catalog; visible in Store after an APK exists
+- Auth: VTC App Store session only — no in-app OTP
+- Do not infer this runtime from `package.json` on a web app; do not let generate-app rewrite `react_native` to `nextjs` / `static`
+
+## Next.js rules
+
+Unchanged — `scaffold-checklist.mdc`, `architecture.mdc`, `api-routes.mdc`, k3s deploy (`deployment.mdc`).
+
+## Shared vs Dedicated
+
+Orthogonal to runtime — see `app-types.mdc`. Static apps are often **Dedicated** (publisher-global ZAPI reads) or **Shared** when using SDK patterns that work client-only.
+
+## Scaffold routing
+
+| Runtime | Checklist |
+|---------|-----------|
+| `nextjs` | `scaffold-checklist.mdc` |
+| `static` | `scaffold-checklist-static.mdc` |
+| `react_native` | `scaffold-checklist-native.mdc` |

@@ -1,0 +1,75 @@
+---
+description: In-app Help wiki — public/wiki markdown served from child app origins for shell chrome Help menu
+globs: public/wiki/**,helpdocs/**
+alwaysApply: false
+---
+
+# App wiki help — shell Help menu & AI corpus
+
+Child apps expose **markdown help** at **`/wiki/`** on their public origin (`https://{module_code}.apps.vtc.com`). The VTC shell **Help** item in the app chrome dropdown loads this content — not from the shell repo.
+
+## Shell loader (reference)
+
+`~/apps/app/src/lib/features/apps/app-help/fetch-app-wiki-help.ts`:
+
+1. **ZAPI** — `GET /api/v1/ai/apps/{moduleCode}/wiki` (when published)
+2. **Static wiki** — `{appOrigin}/wiki/index.json` then each listed `.md` page
+3. **Fallback probes** (single page each): `help.md`, `{moduleCode}.md`, `apps/{moduleCode}.md`, `README.md`
+
+`appOrigin` comes from the app's **`module_url`** / launch URL in the catalog (e.g. `https://leads400dm.apps.vtc.com`).
+
+## Required files (every child app)
+
+| Path | Purpose |
+|------|---------|
+| `public/wiki/help.md` | Primary help article (H1 title used in UI) |
+| `public/wiki/index.json` | Manifest listing wiki pages |
+
+### `index.json` shape
+
+```json
+{
+  "pages": [
+    { "path": "help.md", "title": "My App — Help" }
+  ]
+}
+```
+
+- **`path`** — filename under `/wiki/` (must end in `.md`)
+- **`title`** — optional; shell uses first `# Heading` in the markdown when omitted
+
+### Vite static apps
+
+Files live in **`public/wiki/`** — Vite copies them to `dist/wiki/` on build. No extra config.
+
+### Next.js apps
+
+Files live in **`public/wiki/`** — served at `/wiki/*` by Next static file handler.
+
+## Platform wiki (shell AI corpus)
+
+The **main shell** also maintains platform help at `~/apps/app/public/wiki/` for Vault AI / AI Guide ingestion — see `~/apps/app/helpdocs/INGESTION.md`.
+
+| Location | Audience |
+|----------|----------|
+| `{child}/public/wiki/` | **In-app Help** menu when that app is open |
+| `~/apps/app/public/wiki/apps/{module_code}.md` | Platform catalog / Guide corpus (optional but recommended) |
+
+Do not confuse the two: child `help.md` is fetched cross-origin from the app URL; shell `public/wiki/apps/*.md` is for platform-wide support docs.
+
+## Checklist (new or migrated app)
+
+1. Add `public/wiki/help.md` with H1 title and sections: opening the app, main workflow, space scoping, support.
+2. Add `public/wiki/index.json` listing at least `help.md`.
+3. Optionally add `~/apps/app/public/wiki/apps/{module_code}.md` for platform Guide.
+4. **Verify after deploy:** `curl -s https://{module_code}.apps.vtc.com/wiki/index.json` and `.../wiki/help.md`.
+5. Open app in shell → **⋯** → **Help** — page should render (not "no help available").
+
+## Static deploy note
+
+Apps on the **static lane** (`runtime_type=static`) must **not** remain on a publisher Next.js shard ingress. They are listed in build `excludeModules` and served via `static-apps-gateway`. If Help or the app itself 503s, check for a conflicting `app-runtime-publisher-shard-*` ingress host rule.
+
+## Reference implementations
+
+- `~/apps/jwt/public/wiki/help.md` + `index.json`
+- `~/apps/leads400dm/public/wiki/` (Leads Buddy)

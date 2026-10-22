@@ -1,0 +1,187 @@
+---
+description: Platform URL auth, JWT bootstrap, localStorage, token persistence
+alwaysApply: false
+globs: "**/lib/*Auth*.ts,**/lib/jwt.ts,**/lib/auth.ts,**/lib/db.ts,**/LayoutContent.tsx"
+---
+
+# Auth Bootstrap — VTC Apps
+
+JWT claim reference: `auth-jwt-reference.mdc`. Canonical lib exports: `lib-canonical.mdc`.
+
+## URL injection (VTC shell opens child app)
+
+**Personal** (`group=0`) — storage rules: `personal-storage.mdc`.
+
+```
+https://{appshortname}.apps.vtc.com/?token=...&user=29457&group=0&mode=light&color=%23004A80&lang=en&tz=America/Sao_Paulo
+```
+
+**Space** (example — shell injects space accent as `color`):
+
+```
+https://{appshortname}.apps.vtc.com/?token=...&user=29457&group=1205&mode=dark&color=%237C3AED&lang=en&tz=America/Sao_Paulo
+```
+
+| Param | Meaning |
+|-------|---------|
+| `token` | JWT for this session |
+| `user` | User ID — must match JWT `user_id` after decode |
+| `group` / `g` | `0` = personal; non-zero = active space `group_id` (same value) |
+| `mode`, `color`, `lang` | Theme/i18n — `color` resolves runtime accent (`ui.mdc`) |
+| `tz` | User IANA timezone from shell Settings → General — display times (`ui.mdc`); persist as `posif_tz` |
+| `typography`, `font` | Network branding — `platform` \| `network` + `system` \| `lato` (`network-branding.mdc`) |
+
+Child apps cannot read `app.vtc.com` localStorage. Bootstrap from URL `token` + `posif_token` in app localStorage.
+
+**Shell chrome:** The platform iframe shows the app title (space display name) above the child app. Child apps **must not duplicate** that title in their sticky header — `ui.mdc` **Platform shell chrome**.
+
+## Child app bootstrap (required)
+
+On mount in `LayoutContent` or root client layout:
+
+1. Read `token`, `user`, `group` from `window.location.search`
+2. If `token` present: `localStorage.setItem('posif_token', token)`; optionally `posif_user`, `posif_group`
+3. Call `preserveThemeParams()` on mount **before** stripping `token` from the URL — saves `mode`, `color`, `lang`, `tz`, `typography`, `font` to localStorage (`posif_*`)
+4. Resolve accent in layout: URL `color` → `NEXT_PUBLIC_APP_ACCENT` → `getPersistedThemeParams().color` — `ui.mdc`
+5. Resolve typography: URL `typography` / `font` → `applyAppTypographyToDocument()` — `network-branding.mdc`
+5b. Resolve timezone: URL `tz` → `posif_tz` → browser — `resolveUserTimeZone()` from `@vtc/client` ≥ 1.2.2; format user-visible datetimes with that zone (`ui.mdc`)
+6. If no URL token: `localStorage.getItem('posif_token')`
+7. If still no token but valid `group` or `g` (non-zero): public guest browse (`public-guest-browse.mdc`) — **not** the promotional landing
+8. If still no token and no `group`/`g`: show promotional landing page (`landing-page.mdc`) — Next.js `page.tsx` **and** static Vite `App.tsx`. Never an in-app OTP/login or a missing-token error.
+
+All client `router.push` / internal links must use `addTokenToUrl()` so `color`, `mode`, `lang`, `tz`, `typography`, `font`, and tenancy survive navigation.
+
+## Client helpers (`src/lib/clientAuth.ts`)
+
+```typescript
+const TOKEN_KEY = 'posif_token'
+const MODE_KEY = 'posif_mode'
+const COLOR_KEY = 'posif_color'
+const LANG_KEY = 'posif_lang'
+const TZ_KEY = 'posif_tz'
+
+export function bootstrapAuthFromUrl(): void {
+  if (typeof window === 'undefined') return
+  const params = new URLSearchParams(window.location.search)
+  const token = params.get('token')
+  if (token) localStorage.setItem(TOKEN_KEY, token)
+  const user = params.get('user')
+  const group = params.get('group') ?? params.get('g')
+  if (user) localStorage.setItem('posif_user', user)
+  if (group) localStorage.setItem('posif_group', group)
+}
+
+/** Persist shell-injected theme params so accent survives token strip and client navigation. */
+export function preserveThemeParams(): void {
+  if (typeof window === 'undefined') return
+  const params = new URLSearchParams(window.location.search)
+  const mode = params.get('mode')
+  const color = params.get('color')
+  const lang = params.get('lang')
+  const tz = params.get('tz')
+  if (mode) localStorage.setItem(MODE_KEY, mode)
+  if (color) localStorage.setItem(COLOR_KEY, color)
+  if (lang) localStorage.setItem(LANG_KEY, lang)
+  if (tz) localStorage.setItem(TZ_KEY, tz)
+}
+
+export function getPersistedThemeParams(): {
+  mode?: string
+  color?: string
+  lang?: string
+  tz?: string
+} {
+  if (typeof window === 'undefined') return {}
+  return {
+    mode: localStorage.getItem(MODE_KEY) ?? undefined,
+    color: localStorage.getItem(COLOR_KEY) ?? undefined,
+    lang: localStorage.getItem(LANG_KEY) ?? undefined,
+    tz: localStorage.getItem(TZ_KEY) ?? undefined,
+  }
+}
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(TOKEN_KEY)
+}
+
+export function addTokenToUrl(url: string): string {
+  const urlObj = url.startsWith('http')
+    ? new URL(url)
+    : new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+
+  const token = getAuthToken()
+  if (token) urlObj.searchParams.set('token', token)
+
+  const user = typeof window !== 'undefined' ? localStorage.getItem('posif_user') : null
+  const group = typeof window !== 'undefined' ? localStorage.getItem('posif_group') : null
+  if (user && !urlObj.searchParams.has('user')) urlObj.searchParams.set('user', user)
+  if (group && !urlObj.searchParams.has('group')) urlObj.searchParams.set('group', group)
+
+  const current =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const persisted = getPersistedThemeParams()
+
+  const lang = current?.get('lang') ?? persisted.lang
+  const mode = current?.get('mode') ?? persisted.mode
+  const color = current?.get('color') ?? persisted.color
+  const tz = current?.get('tz') ?? persisted.tz
+
+  if (lang && !urlObj.searchParams.has('lang')) urlObj.searchParams.set('lang', lang)
+  if (mode && !urlObj.searchParams.has('mode')) urlObj.searchParams.set('mode', mode)
+  if (color && !urlObj.searchParams.has('color')) urlObj.searchParams.set('color', color)
+  if (tz && !urlObj.searchParams.has('tz')) urlObj.searchParams.set('tz', tz)
+
+  return url.startsWith('http')
+    ? urlObj.toString()
+    : urlObj.pathname + urlObj.search
+}
+```
+
+Prefer **`@vtc/client` ≥ 1.2.2** (`preserveThemeParams`, `addTokenToUrl`, `resolveUserTimeZone`) over forking the snippet above.
+
+### `LayoutContent.tsx` (theme + auth mount)
+
+```typescript
+useEffect(() => {
+  bootstrapAuthFromUrl()
+  preserveThemeParams()
+  // then strip token from URL if present (keep color/mode/lang/tz in URL or localStorage)
+}, [])
+
+const persisted = getPersistedThemeParams()
+const color =
+  searchParams.get('color') ??
+  process.env.NEXT_PUBLIC_APP_ACCENT ??
+  persisted.color ??
+  undefined
+const mode = (searchParams.get('mode') ?? persisted.mode) === 'dark' ? 'dark' : 'light'
+const lang = searchParams.get('lang') ?? persisted.lang ?? 'en'
+
+return (
+  <ThemeProvider mode={mode} color={color}>
+    …
+  </ThemeProvider>
+)
+```
+
+Call `bootstrapAuthFromUrl()` and `preserveThemeParams()` once after mount (inside `mounted` guard). Reference implementation: `~/apps/lists`.
+
+## Server auth
+
+- `await getAuthenticatedUser(request)` reads `token` from the request (URL query / Bearer)
+- It confirms the token with the VTC API (`GET /api/v1/auth/verify`, `@vtc/auth` with
+  `{ requireVerified: true }`) and only then returns `AuthenticatedUser`; otherwise `null`.
+  Never decode the token yourself on the server to decide access (`auth-jwt-reference.mdc`).
+- Missing/invalid → `{ success: false, code: "AUTH_401", error: "..." }` status **401**
+- Use `user.user_id` and `user.group_id` in queries — snake_case, not camelCase
+
+## Roles (summary)
+
+| `role_type` | Typical name | Helper |
+|-------------|--------------|--------|
+| `"1"` | Owner | `isOwner()` |
+| `"2"` | Admin | `isAdmin()` |
+| `"3"`+ | Member | — |
+
+Per-resource ACL: `access-control.mdc`. Catalog visibility: shell only — not app code.

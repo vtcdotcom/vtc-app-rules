@@ -1,0 +1,48 @@
+---
+description: Error handling, loading states, client auth patterns
+globs: "**/*.tsx,**/api/**/route.ts"
+alwaysApply: false
+---
+
+# Best Practices — VTC Apps
+
+Auth: `auth-bootstrap.mdc`. API envelope: `api-routes.mdc`. Lists: `business-patterns.mdc`.
+
+## Error Handling
+
+- Never `alert()`, `confirm()`, `prompt()`
+- Inline errors; `console.error` for logs; reset loading in `finally`
+
+```tsx
+const res = await fetch(addTokenToUrl('/api/items/list'))
+const result = await res.json()
+if (!result.success) {
+  setError(result.error || 'Failed')
+  return
+}
+```
+
+## Client Auth
+
+`bootstrapAuthFromUrl`, `getAuthToken`, `addTokenToUrl` — once after mount in `mounted` guard.
+
+## API Route Errors
+
+```typescript
+return NextResponse.json(
+  { success: false, code: 'VALIDATION_400', error: 'Name is required' },
+  { status: 400 }
+)
+```
+
+## HTTP Status
+
+400 validation · 401 auth · 403 role · 404 not found · 500 server
+
+## Component Checklist
+
+- [ ] Hooks before conditional returns
+- [ ] `bootstrapAuthFromUrl()` on layout mount
+- [ ] `addTokenToUrl()` on every API fetch
+- [ ] Inline errors, loading on buttons
+- [ ] `mounted` guard before `localStorage`

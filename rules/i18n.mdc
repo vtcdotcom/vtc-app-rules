@@ -1,0 +1,68 @@
+---
+description: I18n required for all VTC apps — provider, locales, no hardcoded UI strings
+alwaysApply: true
+---
+
+# I18n — VTC Apps
+
+**Required for every new app** — all **24** website languages from day one (same codes as vtc.com / shell `?lang=`).
+
+## URL param
+
+Platform injects `lang` using **website codes** (`en`, `es`, `pt-br`, `fr`, …, `tl`, `bn`, `ur`, `pl`, `nl`, `uk`, `he`) — see `naming.mdc`.
+
+```typescript
+const lang = searchParams.get('lang') ?? 'en'
+```
+
+Pass `lang` from `LayoutContent.tsx` into `I18nProvider`. Use `normalizeUrlLang` from `@vtc/i18n` inside the provider (do not fork locale lists).
+
+**Locale ≠ timezone:** `lang` controls copy/RTL; `tz` (IANA, from shell Settings) controls how datetimes are shown. Both come from the shell iframe URL. Format user-visible times with `resolveUserTimeZone()` (`@vtc/client` ≥ 1.2.2) — see `ui.mdc` / `auth-bootstrap.mdc`.
+
+## Scaffold files
+
+```
+src/
+  components/providers/I18nProvider.tsx   ← thin wrapper around @vtc/i18n (see builder template)
+  locales/
+    en.json
+    es.json
+    pt-br.json
+    fr.json
+    … (all 24 — see CHILD_LOCALE_FILE_CODES in @vtc/i18n)
+    he.json
+```
+
+**24 locale codes (filename = code + `.json`):**  
+`en`, `es`, `pt-br`, `fr`, `de`, `it`, `tr`, `id`, `zh`, `ja`, `ko`, `hi`, `ar`, `el`, `ru`, `vi`, `th`, `tl`, `bn`, `ur`, `pl`, `nl`, `uk`, `he`.
+
+Do **not** use legacy `pt.json` — rename to `pt-br.json`.
+
+## Provider
+
+- `src/components/providers/I18nProvider.tsx` — client component; register all 24 catalogs; `normalizeUrlLang(lang)` for catalog lookup; set `document.documentElement.dir` when `isRtlLang` (`ar`, `ur`, `he`).
+- Default / fallback locale: `en`
+- Preserve `lang` in client navigation via `addTokenToUrl` / append `&lang=` when building links
+- Wire in `LayoutContent.tsx` alongside `ThemeProvider` — `scaffold-checklist.mdc`
+
+## Keys
+
+- Use dotted keys: `items.list.title`, `errors.network`, `form.nameRequired`
+- **No hardcoded user-facing strings** in `.tsx` — use `t('key')` or equivalent from your provider
+- Include: buttons, labels, placeholders, empty states, errors, landing copy
+- Server API `error` messages shown to users should use codes client maps to i18n keys where possible
+
+## Sync / rollout tooling
+
+From an app repo root:
+
+- `python3 ~/apps/cursor/scripts/sync-child-app-locales.py --copy-en` — create missing locale files from `en.json`
+- `python3 ~/apps/cursor/scripts/upgrade-child-i18n-provider.py` — regenerate 24-language `I18nProvider.tsx`
+- LLM translation (Composer only): `~/apps/cursor/i18n/COMPOSER_TRANSLATE.md`, `composer-locale-queue.py`, `translate-all-child-apps-composer.sh`
+
+## Adding or refreshing translations
+
+1. Update `en.json` first (source of truth).
+2. Run sync script or translate script so other locale files keep the same keys.
+3. Shell passes `lang=` on iframe URLs — no per-app API for locale.
+4. Shell also passes `tz=` for the user timezone preference — format datetimes with that zone (`ui.mdc`); do not treat `lang` as a timezone.

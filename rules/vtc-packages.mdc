@@ -1,0 +1,145 @@
+---
+description: VTC private npm registry — @vtc/sdk, @vtc/client, @vtc/ui, @vtc/i18n via Verdaccio on npm.vtc.com
+globs: "**/package.json,**/.npmrc,**/package-lock.json"
+alwaysApply: false
+---
+
+# VTC Packages — `@vtc/*` monorepo
+
+Private platform packages on **Verdaccio** at **`https://npm.vtc.com`**. Do **not** use public npmjs.com for `@vtc/*`. Legacy **`@posif/sdk`** is deprecated — migrate to **`@vtc/sdk`**.
+
+## Registry
+
+| Item | Value |
+|------|-------|
+| **URL** | `https://npm.vtc.com/` |
+| **Host** | server1 edge (Caddy) — public DNS |
+| **Scope** | `@vtc/*` only on this registry |
+| **Public deps** | Proxied/cached from `registry.npmjs.org` through Verdaccio |
+
+## Developer authentication (required for `@vtc/*`)
+
+`@vtc/*` packages require a logged-in user to **install** (Verdaccio `access: $authenticated`). Public deps (React, Next, etc.) install without login — they are proxied from npmjs.org.
+
+### New developers — self-service registration
+
+Registry UI: **https://npm.vtc.com/**
+
+```bash
+# First time — creates your account (htpasswd on the server)
+npm adduser --registry https://npm.vtc.com
+
+# Later sessions
+npm login --registry https://npm.vtc.com
+```
+
+Use **your own username** (e.g. `jane`). Auth is written to `~/.npmrc`. Then `npm install` in any VTC app works.
+
+### CI / build server only — `vtc-ci`
+
+`build.vtc.com` and Docker builds use the shared **`vtc-ci`** user via **`NPM_VTC_PASSWORD_B64`** in build env — never share that token with developers or commit it to git.
+
+## `.npmrc` (committed in each app)
+
+**Local development** — registry pointer only; auth comes from `~/.npmrc` after `npm adduser`:
+
+```ini
+registry=https://npm.vtc.com/
+@vtc:registry=https://npm.vtc.com/
+```
+
+**CI / Docker** — `generate-app` injects before `npm ci` (`deployment.mdc`):
+
+```ini
+registry=https://npm.vtc.com/
+@vtc:registry=https://npm.vtc.com/
+//npm.vtc.com/:username=vtc-ci
+//npm.vtc.com/:_password=${NPM_VTC_PASSWORD_B64}
+```
+
+- **`NPM_VTC_PASSWORD_B64`** — base64-encoded password for `vtc-ci` (build secret only). Never commit the raw token.
+- Do **not** add `//npm.vtc.com/:email=...` — newer npm warns it is deprecated.
+
+## Install (all four packages)
+
+```bash
+npm install @vtc/sdk @vtc/client @vtc/ui @vtc/i18n
+```
+
+```json
+{
+  "dependencies": {
+    "@vtc/sdk": "^1.0.0",
+    "@vtc/client": "^1.2.2",
+    "@vtc/ui": "^1.3.0",
+    "@vtc/i18n": "^1.0.0"
+  }
+}
+```
+
+## Package roles
+
+| Package | Purpose | Import examples |
+|---------|---------|-----------------|
+| **`@vtc/sdk`** | ZAPI client, `getDb()` (space silo), **`personalDb()`** (Personal scope, ≥ 1.4.0; server **and** browser), storage | `import { getDb, personalDb } from '@vtc/sdk'` · `import { getStorage } from '@vtc/sdk/storage'` |
+| **`@vtc/client`** | Browser auth bootstrap, `addTokenToUrl`, `authFetch`, theme + typography + **`tz`** params (`posif_tz`), `resolveUserTimeZone()` (v**1.2.2**+), network fonts (v1.2+) | `import { bootstrapAuthFromUrl, authFetch, resolveUserTimeZone, resolveAppFontFamily, NETWORK_FONT_IDS } from '@vtc/client'` |
+| **`@vtc/ui`** | App Shell, header slots, icons, **`type-*` typography** (`@import "@vtc/ui/typography.css"`), floating fields — `typography.mdc` | `import { AppShell, typeClass, SectionHeading, CONTAINER } from '@vtc/ui'` |
+| **`@vtc/i18n`** | `I18nProvider` + `useI18n` with per-app catalogs | `import { I18nProvider, useI18n } from '@vtc/i18n'` |
+| **`@vtc/ledger`** | Immutable records, assets, signatures, verification | `import { ledger } from '@vtc/ledger'` · `import { ledger } from '@vtc/sdk/ledger'` |
+| **`@vtc/native`** | Expo / Store apps only: Store session, ZAPI, S3 presign, credits | `import { configure, bootstrapSession, uploadFile, getBalance } from '@vtc/native'` |
+
+## Expo native (`@vtc/native`)
+
+Source: `~/apps/vtc-native`. Do **not** import `@vtc/sdk` (Node/`getDb`) into Expo.
+
+```bash
+npm install @vtc/native expo-secure-store expo-linking expo-file-system
+```
+
+Add `"plugins": ["@vtc/native"]` so prebuild grants `com.vtc.SESSION`. See `scaffold-checklist-native.mdc`.
+
+## App integration pattern
+
+1. **`.npmrc`** — registry URLs (see above); developers `npm adduser` once, CI uses `NPM_VTC_PASSWORD_B64`.
+2. **`src/lib/clientAuth.ts`** — re-export `@vtc/client` + app-specific guest context (`guestGroupId` option).
+3. **`src/components/providers/I18nProvider.tsx`** — thin wrapper: pass `en`/`es`/`pt` catalogs to `@vtc/i18n`.
+4. **`src/components/AppShell.tsx`** — thin wrapper: resolve `appName` from i18n/env, pass `addToken` from `clientAuth`. `@vtc/ui` **≥ 1.4.0** hides `appName` automatically when embedded in the shell iframe (and drops a root `pageTitle` equal to the app name) — no wrapper logic needed. Older versions have **no** `hideAppName` prop. Home pages pass **no** `pageTitle`/subtitle — `ui.mdc` § Platform shell chrome.
+5. **Server routes** — `@vtc/sdk` only (never import in client components).
+6. **Tailwind v4 `globals.css`** — scan `@vtc/ui` dist so shell utility classes are emitted:
+
+```css
+@source "../../node_modules/@vtc/ui/dist/**/*.{js,cjs}";
+@import "@vtc/ui/typography.css";
+```
+
+`@vtc/ui` ≥ **1.3.0** for shared `type-*` classes — `typography.mdc`. `@vtc/ui` ≥ **1.4.0** required for embedded app-name hiding — `ui.mdc`.
+
+Reference implementation: **`~/apps/jobs`**.
+
+## Publish (maintainers)
+
+```bash
+cd ~/apps/vtc/packages/<name>
+npm publish --registry https://npm.vtc.com/ --userconfig /tmp/npmrc-vtc
+```
+
+Source: monorepo `~/apps/vtc` → `git.vtc.com/vtc/packages` (when initialized).
+
+Only **`@vtc/*`** publishes to this registry. Bump version in `package.json`, publish, then bump consuming apps.
+
+## Legacy `@posif/sdk`
+
+- **Do not** add `@posif/sdk` to new apps or scaffolds.
+- Existing apps: migrate imports to `@vtc/sdk` when touched.
+- `@posif/sdk` on public npm may remain temporarily — do not depend on it for new work.
+
+## Builder / Docker builds
+
+`generate-app` and app Dockerfiles run `npm ci` — inject `NPM_VTC_PASSWORD_B64` and copy `.npmrc` before install (`deployment.mdc`).
+
+## Related
+
+- `ui.mdc` — UI patterns implemented by `@vtc/ui`
+- `storage.mdc` — `@vtc/sdk/storage`
+- https://vtc.com/developers — `npm.vtc.com` hostname
+- `~/ovh/scripts/install-verdaccio-server1.sh` — edge install (ops)

@@ -1,0 +1,136 @@
+---
+description: Dev server file watchers — prevent EMFILE from .cursor symlinks and suite parent folders
+globs: "**/next.config.ts,**/globals.css,**/postcss.config.*"
+alwaysApply: true
+---
+
+# Dev Watchers — Prevent EMFILE (too many open files)
+
+Next.js dev uses **Watchpack** (webpack). Without guardrails it watches parent folders (e.g. `~/apps/eduslide` with dozens of sibling apps), follows **`.cursor/rules` symlinks** to `~/apps/cursor/rules`, and exhausts file descriptors → `EMFILE`.
+
+**Apply on every new app scaffold** — before first `./start.sh`.
+
+## 1. Tailwind v4 — scoped scan only (`globals.css`)
+
+```css
+@import "tailwindcss" source(none);
+@source "../**/*.{js,ts,jsx,tsx}";
+```
+
+| Rule | Reason |
+|------|--------|
+| ✅ `source(none)` on `@import "tailwindcss"` | Disables auto-scan of project root |
+| ✅ `@source` paths stay under `src/` only | Never `@source "../../**"` or bare `@import "tailwindcss"` |
+| ❌ Bare `@import "tailwindcss"` | Scans repo root + may follow `.cursor/rules` symlinks |
+
+`globals.css` lives in `src/app/` — `../**` = `src/**` only.
+
+## 2. `next.config.ts` — mandatory dev `watchOptions`
+
+Copy this block into **every** new VTC Next.js app (adjust only if the app already has a custom `webpack` hook — merge, do not replace):
+
+```typescript
+import type { NextConfig } from 'next'
+import path from 'path'
+
+const projectRoot = path.resolve(__dirname)
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: projectRoot,
+  turbopack: {},
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.watchOptions = {
+        ...config.watchOptions,
+        followSymlinks: false,
+        poll: 1000,
+        aggregateTimeout: 300,
+        ignored: [
+          '**/node_modules/**',
+          '**/.git/**',
+          '**/.next/**',
+          '**/.cursor/**',
+          // App inside a suite folder (eduslide/eduassign, crm_suite/…)
+          path.join(projectRoot, '..', '**'),
+        ],
+      }
+    }
+    return config
+  },
+}
+
+export default nextConfig
+```
+
+| Option | Why |
+|--------|-----|
+| `followSymlinks: false` | Do not traverse `.cursor/rules` → `~/apps/cursor/rules` |
+| `path.join(projectRoot, '..', '**')` | Ignore sibling apps in suite / `~/apps` |
+| `poll: 1000` | Safer on WSL / low `ulimit` (optional but recommended) |
+
+**Strings only** in `ignored` — Next.js webpack schema rejects function callbacks.
+
+### Next.js 16+ production build (Docker)
+
+The `webpack` hook above is **dev-only** (`if (dev)`). Next.js 16 defaults `next build` to **Turbopack**; a `webpack` key without `turbopack` fails the platform Docker build.
+
+| Required | Why |
+|----------|-----|
+| `turbopack: {}` in `next.config` | Silences the Turbopack/webpack clash — reference: `~/apps/jobs/next.config.ts` |
+| `"build": "next build --webpack"` in `package.json` | Belt-and-suspenders for Docker (`npm run build` on build.vtc.com) |
+
+Run `npm run build` locally before push — same command as the platform image build (`deployment.mdc`).
+
+## 3. Cursor rules — copy, do not symlink
+
+```bash
+~/cursor_rules/scripts/push-stub.sh ~/apps/my-app
+# Creates/refreshes: my-app/.cursor/rules/00-vtc-central.mdc
+# Agents read ~/cursor_rules/rules/ from that stub.
+```
+
+| Do | Don't |
+|----|-------|
+| Install the stub via `add.sh` / `new.sh` / `push-stub.sh` | Symlink `.cursor/rules` → `~/cursor_rules/rules` (webpack EMFILE) |
+| Gitignore `.cursor/` | Commit `.cursor/` |
+| Edit rules in `~/cursor_rules/rules/` | Copy the rule pack into the app |
+
+## 4. Workspace and suite folders
+
+| Situation | Do |
+|-----------|-----|
+| Developing one app | Open Cursor workspace at **`~/apps/my-app`** or **`~/apps/eduslide/eduassign`**, not the suite parent |
+| Eduslide placeholders | Do **not** link `.cursor/rules` until the app has a real scaffold (`package.json`). Run `link-cursor.sh` when building that app |
+| Suite root (`eduslide/`) | Catalogue only — no `.cursor/rules` on the parent |
+
+## 5. `start.sh` — mandatory EMFILE guard (Linux / WSL)
+
+Every app **`start.sh`** must set polling and raise `ulimit` before `npm run dev`:
+
+```bash
+# Avoid EMFILE: native watchers climb parent dirs / .cursor/rules symlinks on Linux & WSL.
+if ulimit -n 65536 2>/dev/null; then
+  :
+else
+  ulimit -n 8192 2>/dev/null || true
+fi
+export WATCHPACK_POLLING=true
+export WATCHPACK_POLLING_INTERVAL=1000
+export CHOKIDAR_USEPOLLING=true
+```
+
+Use **`./start.sh`** for local dev — do not run bare `npm run dev` on Linux/WSL unless you export the vars above manually.
+
+| Variable | Why |
+|----------|-----|
+| `ulimit -n 65536` | Raises open-file ceiling (fallback `8192`) |
+| `WATCHPACK_POLLING=true` | Webpack uses polling instead of native `inotify` |
+| `WATCHPACK_POLLING_INTERVAL=1000` | Poll interval ms |
+| `CHOKIDAR_USEPOLLING=true` | Next/Turbopack chokidar companion |
+
+Reference: `~/apps/chat/start.sh`, `~/apps/jwt/start.sh`, builder template `start.sh`.
+
+## Scaffold checklist hook
+
+When creating `next.config.ts` and `globals.css`, verify both sections above exist. `scaffold-checklist.mdc` step 1 includes this file.

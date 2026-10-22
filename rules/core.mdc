@@ -1,0 +1,66 @@
+---
+description: Non-negotiable rules for VTC Next.js apps — env, auth, SDK, security
+alwaysApply: true
+---
+
+# Core — VTC Apps
+
+Task routing: `README.md`. App types: `app-types.mdc`. Workflow: `product-start.mdc`.
+
+## Non-Negotiables
+
+1. **Never hardcode** URLs, DB URIs, contract addresses, or API keys — use env (`env-development.mdc`). ZAPI: **`https://api.vtc.com`** via `VTC_API_URL` (legacy `POSIF_API_URL` still injected in parallel).
+2. App JWT always as query **`?token=`** — not `Authorization` on app routes. Exception: platform services (`via.posif.com`, ZAPI) per their APIs.
+3. **Dedicated / Publisher app** (token `app`): never `getDb()`; always `connectDB()`. **Shared / Space app:** `getDb()` when `group_id !== '0'` in production. **Personal data:** `personalDb()` (`@vtc/sdk` ≥ 1.4.0) — never `getPersonalDb()` or `getDb()` at `group=0` (`personal-storage.mdc`).
+4. **Shared app queries:** always filter `group_id` + exclude `status: 'deleted'` by default (`data-model.mdc`).
+5. **Soft delete** unless user requests hard delete.
+6. **No dashboard** unless user or brief requires it.
+7. **i18n** for all user-visible text (`i18n.mdc`).
+8. Do not run `./start.sh` unless the user asks.
+9. No `alert()`, `confirm()`, or `prompt()`.
+10. **Subdomain apps** (`xxx.apps.vtc.com` publisher lane; legacy `*.posif.com` aliases): deploy is automatic on push — do not ask the user to deploy after commit/push (`deployment.mdc`).
+11. **Runtime accent color** — use `--app-accent*` tokens from URL `color` / app default; no hardcoded indigo/purple primaries in components (`ui.mdc`).
+12. **Cursor rules only — not sibling apps** — when scaffolding or updating an app, implement from `.cursor/rules/` in the **current workspace** only. **Do not** copy code, env vars, file layout, or patterns from other repos under `~/apps/` — they were built at different times and many are stale or wrong. **Do not** open or grep sibling apps as a template unless the user **explicitly** names one app to mirror. If a rule mentions a "reference app", that is a maintainer pointer — still implement from the rule text, not by copying that repo.
+13. **VTC Updates** — a user-facing feature, fix, or improvement is not finished until it is published into VTC Updates. The same applies when a new app is created and listed in the app store: one note, `id` `app-<appshortname>`, `product` `App store` (`vtc-changelog.mdc`). In the same work, add `.vtc/changelog/<id>.json` in the repo that shipped it and run `~/apps/vtcupdates/scripts/publish-vtc-note.mjs`. A git commit or deploy does not do this. Skip refactors, chores, and apps that are not listed yet. Space-only product notes stay in the Features app.
+
+## Static SPA (`runtime_type=static`)
+
+- Browser calls **ZAPI** with JWT in query — not same-origin `/api/*`
+- No `MONGODB_URI`, no `getDb()` / `connectDB()` in the app repo
+- Build-time env: `VITE_*` prefix only — `scaffold-checklist-static.mdc`
+
+## Platform Standards
+
+- Node.js **22.x LTS** — `"engines": { "node": ">=22 <23" }`
+- Pin **exact versions** for Next.js, React, react-dom — no `^` or `~`
+- **New apps:** Tailwind CSS **v4** only — `ui.mdc` (runtime accent tokens, not fixed indigo/purple)
+- Dev server: `127.0.0.1` only, never `0.0.0.0`
+
+## Environment
+
+- Dev: `env_development` → `.env.development` (local, gitignored)
+- Prod app keys: **`.env.production`** — app-owned keys only; commit and push (`env-development.mdc`)
+- Required in `env_development`: `MONGODB_DEV_URI`, `APP_PORT`, `APP_NAME`
+- **Do not commit** platform-injected vars (`VTC_API_URL`, `POSIF_API_URL`, `MONGODB_URI`, `DEEPINFRA_*`, realtime/shell URLs) or build-injected identity — build.vtc.com merges at deploy
+- No fallback URLs in code — fail gracefully if missing
+
+## APIs & Auth
+
+- Browser calls same-origin `/api/*` with JWT via `addTokenToUrl()` — `auth-bootstrap.mdc`
+- Server ZAPI calls use `VTC_API_URL` via `getVtcApiUrl()` — `env-development.mdc`
+- Required libs: `jwt.ts`, `auth.ts`, `clientAuth.ts`, `db.ts`, `mongodb.ts` — `lib-canonical.mdc`
+
+## SDK
+
+- `@vtc/sdk` — **Shared apps only** for tenanted DB (`vtc-packages.mdc`)
+- **Dedicated apps** — `connectDB()` only; file uploads via `@vtc/sdk/storage` — `storage.mdc`
+- Legacy `@posif/sdk` — deprecated; migrate to `@vtc/sdk`
+
+## Realtime
+
+- App pub/sub: `wss://ws.vtc.com` (`NEXT_PUBLIC_WS_URL`) — `realtime.mdc`
+- **Not** `chat.vtc.com` for app realtime unless building platform chat (posif-svelte shell only)
+
+## Landing Page
+
+Unauthenticated: **promotional landing** — hero, features panel, Connect to VTC path cards (`landing-page.mdc`). Accent via runtime tokens (`ui.mdc`). No app logic or API calls.

@@ -1,0 +1,173 @@
+---
+description: Video uploads — all videos via ZAPI → vtc-media-worker (FFmpeg) with named profiles
+globs: "**/api/**/upload/**,**/video/**,**/gallery/**,**/media/**"
+alwaysApply: false
+---
+
+# Video Uploads — VTC Media Worker
+
+**All user-uploaded video** must be transcoded by **`vtc-media-worker`** (FFmpeg on server4) before playback. Do **not** PUT finished `.mp4` files to the public bucket from the client or app server.
+
+Images and non-video files: `storage.mdc`.
+
+## Infrastructure
+
+| Role | Apps use | Ops only |
+|------|----------|----------|
+| **ZAPI** | `getVtcApiUrl()` (`env-development.mdc`) — beta: shell API on `beta.vtc.com` | `api.vtc.com` |
+| **FFmpeg worker** | Never call from apps | `internal only (platform network)` (`vtc-media-worker`) |
+| **Object storage** | `https://s3.vtc.com` (public CDN base) | MinIO on server4 |
+
+ZAPI orchestrates presigned raw upload → worker queue → internal callback → job status in MongoDB (`video_processing_jobs`).
+
+## Required flow (apps)
+
+```
+1. App server → ZAPI  POST /api/v1/media/videos     (profile, filename, content_type, app_code?)
+   ← { job_id, status: "awaiting_upload", upload_url, upload_method: "PUT", upload_headers }
+
+2. Client or app server → S3  PUT upload_url          (raw bytes only)
+
+3. App server → ZAPI  POST /api/v1/media/videos/{job_id}/process
+
+4. App server → ZAPI  GET  /api/v1/media/videos/{job_id}   (poll until ready or failed)
+   ← { status: "ready", video_url, thumbnail_url, duration_seconds }
+```
+
+**Apps poll ZAPI.** There is no app webhook today — worker callbacks are internal (worker → ZAPI only).
+
+All ZAPI routes need `Authorization: Bearer <user JWT>`. Forward the user's JWT from your app API route; never expose `MEDIA_PROCESS_API_TOKEN` to the client.
+
+## ZAPI response envelope
+
+ZAPI returns:
+
+```json
+{ "success": true, "data": { ... }, "message": "...", "timestamp": "..." }
+```
+
+Read job fields from **`data`**. On error: `success: false` or HTTP 4xx/5xx — `api-routes.mdc`.
+
+## Job statuses
+
+| Status | Meaning |
+|--------|---------|
+| `awaiting_upload` | Job created; raw PUT not done yet |
+| `processing` | Queued on worker; FFmpeg running |
+| `ready` | Use `data.video_url` + `data.thumbnail_url` |
+| `failed` | Show retry UI; `data.error` if present |
+
+## ZAPI endpoints
+
+| Step | Method | Path |
+|------|--------|------|
+| List profiles | `GET` | `/api/v1/media/profiles` |
+| Create job | `POST` | `/api/v1/media/videos` |
+| Start transcode | `POST` | `/api/v1/media/videos/{job_id}/process` |
+| Poll status | `GET` | `/api/v1/media/videos/{job_id}` |
+
+Create body:
+
+```json
+{
+  "profile": "gallery",
+  "filename": "clip.mov",
+  "content_type": "video/quicktime",
+  "max_duration_seconds": 60,
+  "app_code": "myapp"
+}
+```
+
+Allowed `content_type` values: `video/mp4`, `video/quicktime`, `video/webm`, `video/x-msvideo`, `video/mpeg`.
+
+## Named profiles
+
+Pick one per upload. Canonical list: `GET /api/v1/media/profiles` or `vtc-media-worker` `app/profiles.py`.
+
+| Profile | Max width | Max length | Use case |
+|---------|-----------|------------|----------|
+| `gallery` | 1280px | 60s | **Default** — space gallery, short clips |
+| `story` | 720px | 30s | Vertical/lightweight stories |
+| `feed` | 1080px | 120s | Feed posts |
+| `clip` | 1280px | 180s | Longer hosted clips |
+| `watermarked` | 1280px | 60s | Public clips with VTC logo |
+| `source` | 1920px | 300s | High-quality archive (rare) |
+
+`max_duration_seconds` on create is capped by the profile max. Per-job FFmpeg overrides — platform only, not mini-apps.
+
+Set default per app: `MEDIA_VIDEO_PROFILE=gallery` in `env_development` / server env.
+
+## App server pattern
+
+Proxy ZAPI from a route (e.g. `POST /api/videos`) — do not call the worker or MinIO upload logic from the client except the presigned `PUT`.
+
+```typescript
+const api = getVtcApiUrl()
+const profile = process.env.MEDIA_VIDEO_PROFILE ?? 'gallery'
+const headers = { Authorization: `Bearer ${userJwt}`, 'Content-Type': 'application/json' }
+
+// 1. Create job
+const created = await fetch(`${api}/api/v1/media/videos`, {
+  method: 'POST', headers,
+  body: JSON.stringify({ profile, filename: file.name, content_type: file.type, app_code: process.env.APP_NAME }),
+}).then(r => r.json())
+if (!created.success) throw new Error(created.message)
+const { job_id, upload_url, upload_headers } = created.data
+
+// 2. Client PUTs raw file to upload_url (or server streams bytes)
+await fetch(upload_url, { method: 'PUT', headers: upload_headers, body: file })
+
+// 3. Queue transcode
+await fetch(`${api}/api/v1/media/videos/${job_id}/process`, { method: 'POST', headers })
+
+// 4. Poll until ready (exponential backoff)
+```
+
+Store in app MongoDB after poll succeeds:
+
+```typescript
+{
+  job_id: string,
+  status: 'awaiting_upload' | 'processing' | 'ready' | 'failed',
+  profile: string,
+  video_url?: string,
+  thumbnail_url?: string,
+  duration_seconds?: number,
+}
+```
+
+Rewrite URLs with `resolvePublicStorageUrl` before save/display — `storage.mdc`.
+
+## Client UX
+
+- Validate file size before upload (suggest ≤ 200MB raw; stricter for `story`)
+- Show processing UI while polling; use `thumbnail_url` when `ready`
+- Never put raw `upload_url` or raw S3 keys in `<video src>`
+
+## Env vars (apps)
+
+| Variable | Purpose |
+|----------|---------|
+| `VTC_API_URL` | ZAPI base — injected at deploy; do not hardcode (`env-development.mdc`) |
+| `MEDIA_VIDEO_PROFILE` | Default profile for this app |
+| `STORAGE_PUBLIC_BASE_URL` / `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` | CDN rewrite for `video_url` / `thumbnail_url` |
+
+## Local dev
+
+`~/posif-docker/ffmpeg_processor` (MinIO poll) is **not** the production contract. Use the same ZAPI flow against beta or local ZAPI + MinIO — `storage.mdc`.
+
+## Anti-patterns
+
+- ❌ `POST /v1/process` on the worker from app code
+- ❌ Waiting for a webhook/callback to the app (poll ZAPI instead)
+- ❌ Uploading finished `.mp4` straight to the public bucket
+- ❌ Serving raw upload URLs in the UI
+- ❌ Hardcoding internal IPs or ports, `api.vtc.com`, or bucket names
+- ❌ LiveKit / WebRTC — out of scope (`realtime.mdc`)
+
+## Related
+
+- `storage.mdc` — public URL rewrite, buckets
+- `env-development.mdc` — `VTC_API_URL`
+- `api-routes.mdc` — response envelope, auth
+- https://vtc.com/developers — hostnames

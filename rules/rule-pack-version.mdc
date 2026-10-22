@@ -1,0 +1,19 @@
+---
+description: Bump RULE-PACK-VERSION when editing shared VTC Cursor rules
+globs: rules/**/*
+alwaysApply: false
+---
+
+# Rule pack versioning
+
+When you **change any file** under `~/cursor_rules/rules/` (`.mdc`, `README.md`, `BUILD-CHECKLIST.md`, etc.):
+
+1. **Bump** `RULE-PACK-VERSION` in the same commit/edit:
+   - **MINOR** (`v1.0` → `v1.1`) — edits, additions, clarifications
+   - **MAJOR** (`v1.1` → `v2.0`) — breaking renames, removed rules, workflow changes
+2. Keep the line format: `Rule pack version: vtc-app-rules-vX.Y`
+3. Stub apps read `~/cursor_rules/rules/` directly, so a version bump is live without copying rules into each app. Run `~/cursor_rules/scripts/add.sh <parent>` only when the stub file itself changed. `publish-public-rules.sh` updates the public repo for external developers.
+
+Do **not** bump for typo fixes in `RULE-PACK-VERSION` only, or when the user explicitly says to skip versioning.
+
+Do not copy the rule pack into app repos. The project stub points here.

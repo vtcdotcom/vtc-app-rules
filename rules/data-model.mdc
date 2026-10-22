@@ -1,0 +1,104 @@
+---
+description: Standard MongoDB document fields, status, soft delete — by app type
+alwaysApply: false
+globs: "**/api/**/route.ts,**/lib/**/*.ts"
+---
+
+# Data Model — VTC Apps
+
+Collections: `{appshortname}_{entity}` — `naming.mdc`. App type: `app-types.mdc`.
+
+## Required on Every Business Document
+
+| Field | Type | Notes |
+|-------|------|--------|
+| `_id` | string | Prefer `nanoid(10)` unless ObjectId |
+| `created_at` | ISO string or Date | Set on create |
+| `updated_at` | ISO string or Date | Every update |
+| `status` | string | See enum below |
+| `created_by` | string | `user.user_id` |
+
+## Core Records exception
+
+Core Records (`suite_*`, `invoicing_*`, `purchasing_*`) are **camelCase** with both `group_id` and `groupId` — `core-records.mdc`. Link fields on your own documents: `clientId`, `itemId`, `invoiceId` (+ a display name).
+
+## Status Enum
+
+```typescript
+type RecordStatus = 'active' | 'archived' | 'deleted'
+```
+
+- **`active`** — default; show in normal lists
+- **`archived`** — hidden from default lists; recoverable
+- **`deleted`** — soft delete default — exclude from lists
+
+**Hard delete** — only when user explicitly asks.
+
+## App-Type Fields
+
+### Shared app — space-owned collections
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| `group_id` | **Yes** | `user.group_id` on create; **filter every query** |
+
+### Dedicated / Publisher app — publisher-space collections (token `app`)
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| `group_id` | **No** | Data shared across all spaces |
+
+Dedicated per-user data (rare): filter by `user_id`, not `group_id`.
+
+### Personal store — user-owned collections
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| `group_id` | **No** (do not filter) | Proxy scopes by JWT `user_id`. Dual-scope apps may store `group_id: '0'` and `kind: 'personal'`. |
+| `user_id` | **Do not set** | Stamped and enforced by `/api/v1/db/personal/*`. |
+
+Full rules: `personal-storage.mdc`. List filter: `{ status: { $ne: 'deleted' } }` only.
+
+## Create / Update Helpers
+
+```typescript
+function baseCreateFields(user: AuthenticatedUser, appType: 'dedicated' | 'shared' | 'personal') {
+  const now = new Date().toISOString()
+  return {
+    created_at: now,
+    updated_at: now,
+    created_by: user.user_id,
+    status: 'active' as const,
+    ...(appType === 'shared' ? { group_id: user.group_id } : {}),
+    ...(appType === 'personal' ? { kind: 'personal' as const, group_id: '0' } : {}),
+  }
+}
+```
+
+## List Query Baseline
+
+**Shared app:**
+
+```typescript
+const filter = { group_id: user.group_id, status: { $ne: 'deleted' } }
+```
+
+**Dedicated app:**
+
+```typescript
+const filter = { status: { $ne: 'deleted' } }
+```
+
+**Personal store:**
+
+```typescript
+const filter = { status: { $ne: 'deleted' } }
+```
+
+Do not add `user_id` or `group_id` to the personal filter. Find pages cap at 200 (`personal-storage.mdc`).
+
+## Indexes
+
+- Shared: `{ group_id: 1, status: 1, updated_at: -1 }`
+- Dedicated: `{ status: 1, updated_at: -1 }`
+- Personal: platform-managed buckets — **no** `createIndex` via `personalDb()`

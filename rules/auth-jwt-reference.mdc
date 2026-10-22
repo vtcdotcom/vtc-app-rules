@@ -1,0 +1,81 @@
+---
+description: JWT payload claims and AuthenticatedUser type — reference
+alwaysApply: false
+---
+
+# JWT Reference — VTC Apps
+
+Bootstrap flow: `auth-bootstrap.mdc`. Lib exports: `lib-canonical.mdc`.
+
+## Standard claims
+
+| Claim | Example | Notes |
+|-------|---------|--------|
+| `iss` | `tag_api_v1` | Issuer |
+| `aud` | `zapi_server` | Audience |
+| `iat` / `exp` | unix seconds | Validate `exp` on server |
+| `user_id` | `"1"` | Matches URL `user` |
+| `user_type` | `"1"` | Platform user type |
+| `initial_login_user_id` | `"1"` | Original login user |
+| `user_name` | `"mark"` | Username slug |
+| `group_id` | `"2"` or `"0"` | Matches URL `group`; `"0"` = personal context — `personal-storage.mdc` |
+| `group_user_name` | `"vtc"` | Space slug in space context |
+| `role` | object | Space context; see below |
+| `client_id` | string | Client/session id |
+| `network_id` | string | Network context |
+| `token_id` | string | Token instance id |
+
+Never trust URL `user`/`group` without verifying against decoded JWT.
+
+## Server verification (required)
+
+Decoding the payload (base64, `jwt.decode`, `decodeJwt`, jose `decodeJwt`) does **not** check the
+signature. Anyone can build a token with any `user_id`, `group_id` or `role`. On the server:
+
+- Get the user with `const user = await getAuthenticatedUser(request)` from `@/lib/auth`.
+- `getAuthenticatedUser` confirms the token with the VTC API: `GET {VTC_API_URL}/api/v1/auth/verify`
+  with `Authorization: Bearer <token>` → 200 `{ data: { claims } }` for a genuine token, 401 for a
+  forged, tampered or expired one. Use `@vtc/auth` with `{ requireVerified: true }` (fail closed:
+  if the API cannot be reached, refuse the request). Cache results briefly (valid ≤ 5 min, invalid
+  30 s); never past `exp`.
+- No `JWT_SECRET`, no module credential in the app. `/api/v1/users/me` does not exist — do not use it.
+- Only then compare URL `user`/`group` with the claims and check `role` for admin actions.
+- Client-side decode stays for display only.
+
+## Space context — role object
+
+```json
+{
+  "user_id": "1",
+  "group_id": "2",
+  "group_user_name": "vtc",
+  "role": {
+    "role_id": "5464",
+    "role_name": "Member",
+    "role_type": "3"
+  }
+}
+```
+
+Owner example: `"role_type": "1"`, `"role_name": "Owner"`.
+
+## AuthenticatedUser type
+
+```typescript
+export type AuthenticatedUser = {
+  user_id: string
+  user_type: string
+  initial_login_user_id: string
+  user_name: string
+  group_id: string
+  group_user_name?: string
+  role?: { role_id: string; role_name: string; role_type: string }
+  client_id?: string
+  network_id?: string
+  token_id?: string
+}
+```
+
+## Parent app localStorage (reference — do not read from child apps)
+
+`app.vtc.com` shell localStorage keys (legacy names): `posif_auth_state`, `posif_groups_state`, `posif_client_unique_id`, `posif_settings`.

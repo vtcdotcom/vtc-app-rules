@@ -1,0 +1,58 @@
+---
+description: CRUD rules — search, pagination, sort, validation, soft delete, roles
+globs: "**/api/**/route.ts,**/app/**/page.tsx"
+alwaysApply: false
+---
+
+# Business Patterns — VTC Apps
+
+Data: `data-model.mdc`. Screens: `ux-screens.mdc`. API: `api-routes.mdc`.
+
+## Default Capabilities (every CRUD entity)
+
+| Capability | Required |
+|------------|----------|
+| Search | Yes — `q` param, server-side |
+| Pagination | `limit` (default 20, max 100), `offset` |
+| Sort | `sort` + `order` asc/desc; default `updated_at` desc |
+| Soft delete | Unless user asks for hard delete |
+| Form validation | Client + server before submit |
+
+## List API
+
+```
+GET /api/[entity]/list?q=&limit=20&offset=0&sort=updated_at&order=desc
+```
+
+| Param | Default | Behavior |
+|-------|---------|----------|
+| `q` | — | Case-insensitive regex on text fields |
+| `limit` | `20` | Cap 100 |
+| `offset` | `0` | Pagination |
+| `sort` | `updated_at` | Whitelist server-side |
+| `status` | active | `all` = non-deleted; admin views for archived/deleted |
+
+## Delete — Soft (default)
+
+```typescript
+await db.collection(COLLECTION).updateOne(
+  { _id: id, ...scopeFilter },
+  { $set: { status: 'deleted', updated_at: new Date().toISOString() } }
+)
+```
+
+`scopeFilter`: Shared app includes `group_id`; Dedicated uses id only.
+
+## Role Guards
+
+| Action | Rule |
+|--------|------|
+| List / read | Authenticated; Shared scoped to `group_id` |
+| Create | Authenticated member+ |
+| Update any | `isAdmin(user)` |
+| Soft delete | Admin/owner or creator per brief |
+| View deleted | `isAdmin(user)` |
+
+## Forms
+
+Validate before submit; disable button while loading; all copy via i18n (`i18n.mdc`).

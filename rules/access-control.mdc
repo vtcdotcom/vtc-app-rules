@@ -1,0 +1,218 @@
+---
+description: In-app access control — JWT roles, group roles, member lists, usernames, ZAPI member APIs
+alwaysApply: false
+---
+
+# In-App Access Control
+
+JWT bootstrap: `auth-bootstrap.mdc`. Admin helpers: `lib-canonical.mdc` (`isAdmin`, `isOwner`). CRUD guard table: `business-patterns.mdc`.
+
+**Canonical reference app:** `~/apps/jobs` — copy this pattern exactly:
+
+| File | Purpose |
+|------|---------|
+| `src/components/JobAccessEditor.tsx` | ACL UI — 3-segment invite picker + chips |
+| `src/lib/jobAccess.ts` | Parse, expand lists, access checks, list filter |
+| `src/lib/posifApi.ts` | ZAPI member/role/list helpers |
+| `src/app/api/group-members`, `group-roles`, `member-lists` | Browser proxies to ZAPI |
+
+Legacy reference (same shape): `~/apps/kanban` — `BoardAccessEditor.tsx`, `boardAccess.ts`.
+
+Use when an app must restrict **who** can see or edit a record inside the app — by **username** (specific person), by **group role**, or by a **user list** from the space Members area.
+
+---
+
+## ACL UI pattern (required — do not improvise)
+
+When a resource has private visibility, the access editor **must** expose exactly **three invite kinds** in a **3-segment control** (pill/tab toggle — one active segment at a time):
+
+| Segment label (i18n) | Invite kind | What gets added |
+|------------------------|-------------|-----------------|
+| **Username** | `person` | Search members via `/api/group-members?q=`; add by `user_id` |
+| **Role** | `role` | Pick from group-defined roles via `/api/group-roles`; add by `role_id` |
+| **UserList** | `list` | Pick from space member lists via `/api/member-lists`; add by `list_id` |
+
+**Selected entries render as chips** below the picker (`rounded-full` badges). Multiple chips per kind are allowed — users can add several usernames, roles, and lists on the same resource.
+
+**Do not:**
+
+- Replace the 3-segment control with a single dropdown, radio set, or free-text field only.
+- Omit any of the three kinds (Username / Role / UserList) when `visibility === 'private'` in a Shared (space) app.
+- Use JWT `role_type` buckets (`"1"`/`"2"`/`"3"`) in the picker — ACL roles are **group-defined** `role_id` values from ZAPI `/roles`.
+- Show role/list pickers in personal context (`group_id === "0"`) — people-only there.
+
+Copy `JobAccessEditor.tsx` structure: `inviteKind` state `'person' | 'role' | 'list'`, segment buttons, conditional picker panel, chip row for `memberLabels` + `roleLabels` + `listLabels`.
+
+### Owner / admin bypass (do not add to chips)
+
+**Space owners and admins (`isAdmin(user)` — JWT `role_type` `"1"` or `"2"`) always have full access.** They do **not** need to appear in `allowedUserIds`, `allowedRoleIds`, or `allowedListIds`, and must **not** be required in the chip list UI.
+
+Enforce on the server in every access check and list filter:
+
+```typescript
+if (isAdmin(user)) return true   // or: skip ACL $or in buildXxxListFilter
+```
+
+The **resource creator** (`created_by` / `createdBy`) also always has access; auto-include their `user_id` in `allowedUserIds` on save if missing (`parseJobAccessInput` in `jobAccess.ts`) — but still **do not** require owners/admins in the picker.
+
+Personal context: no role/list segments; creator + `allowedUserIds` only.
+
+Personal **storage** (`personalDb()`) is owner-only — inviting people does **not** open the owner's bucket to them. Shared personal records need a publisher share index (`personal-storage.mdc`). Do not authorize personal rows with `isAdmin` / space roles.
+
+## Out of scope — catalog Access Settings
+
+**Do not implement catalog visibility in app code.** The VTC shell controls which apps appear in the catalog and who can open them (platform `app_visibility` / publisher Access Settings). That gate runs **before** the app loads. This rule covers ACL **inside** the app only — once the user is already in.
+
+---
+
+## Identity fields (do not confuse)
+
+| Field | Source | Use |
+|-------|--------|-----|
+| `user_id` | JWT `user_id`, URL `user` | **Primary key** for access checks and document ownership |
+| `user_name` | JWT `user_name` | Username **slug** for the logged-in user (e.g. `"mark"`) — display only; not a DB key |
+| `group_user_name` | JWT | Space slug in space context (e.g. `"vtc"`) |
+| `role.role_id` | JWT | **Group-defined role** ID — use for role-based invites |
+| `role.role_type` | JWT | Platform bucket: `"1"` Owner, `"2"` Admin, `"3"`+ Member — use `isAdmin` / `isOwner` |
+| `role.role_name` | JWT | Human label (e.g. `"Member"`, `"Owner"`) — display only |
+
+**Rule:** Always authorize with `user_id` (and `group_id` for Shared apps). Never authorize from URL `user` without JWT decode. `user_name` is not unique enough for storage keys.
+
+---
+
+## Two layers of “roles”
+
+### 1. Platform role buckets (JWT `role_type`)
+
+Present in **space context** (`group_id !== "0"`). Enforced in every app via helpers:
+
+```typescript
+import { isAdmin, isOwner } from '@/lib/auth'
+
+// role_type "1" → isOwner
+// role_type "1" or "2" → isAdmin
+// role_type "3"+ → ordinary member
+```
+
+Use for **app-wide** actions: delete any record, org settings, publish group-wide visibility. See `business-patterns.mdc` guard table.
+
+### 2. Group-defined roles (JWT `role.role_id` + ZAPI)
+
+Spaces can define **custom roles** (e.g. “Sales”, “Warehouse”). IDs differ per space.
+
+- JWT carries the user’s current `role_id` and `role_name`.
+- To **list roles for pickers** (admin UI): server call ZAPI (below).
+- To **grant access by role**: store `allowedRoleIds: string[]` on the resource; at read time check `user.role?.role_id` is in the list.
+
+**Legacy:** Some older data used `role_type` buckets (`"1"`–`"4"`) instead of `role_id`. Prefer `role_id` for new apps. Kanban maps legacy types in `boardAccess.ts` if you must read old documents.
+
+---
+
+## Member lists
+
+Space admins create **member lists** under the space **Members** area in the VTC shell.
+
+| Concept | Storage on resource | Runtime check |
+|---------|---------------------|-----------------|
+| Specific people | `allowedUserIds: string[]` | `allowedUserIds.includes(user.user_id)` |
+| Space roles | `allowedRoleIds: string[]` | `allowedRoleIds.includes(user.role?.role_id)` |
+| Member lists | `allowedListIds: string[]` | Expand lists → user IDs **on save**; store merged `allowedUserIds` |
+
+**On create/update (server):**
+
+1. Accept `allowedUserIds`, `allowedRoleIds`, `allowedListIds` from the client.
+2. If `allowedListIds` present: call `expandMemberListIdsToUserIds(token, groupId, listIds)` and **merge** into `allowedUserIds`.
+3. Persist both `allowedListIds` (for UI labels) and the merged `allowedUserIds` (for fast reads).
+4. Optionally store `memberLabels`, `roleLabels`, `listLabels` for display without re-fetching ZAPI.
+
+**On read / list filter:** `isAdmin(user)` → no ACL filter. Else `$or` on `created_by`, `allowedUserIds`, `allowedRoleIds`, and `visibility: 'network'`. See `buildJobListFilter` in `jobAccess.ts`.
+
+**Who can configure lists/roles in UI:** Space admins/owners only (`isAdmin(user)` && space context). Personal context (`group_id === "0"`): people-only invites — no role or member-list pickers.
+
+---
+
+## ZAPI — server-side only
+
+Base URL: `getVtcApiUrl()` (`env-development.mdc`). Auth: `Authorization: Bearer <JWT>` — **not** query `token` (ZAPI is a platform service).
+
+Require active group: `user.group_id !== "0"`.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/groups/{groupId}/members?limit=&offset=&q=` | Search members; resolve display names and `user_name` |
+| `GET /api/v1/groups/{groupId}/roles` | List group-defined roles (`id`, `role_name`) — admin |
+| `GET /api/v1/groups/{groupId}/lists` | List member lists (`id`, `title`) — admin |
+| `GET /api/v1/groups/{groupId}/lists/{listId}/members` | User IDs in one list (`content_id` per row) |
+
+Proxy from your app’s `/api/*` routes so the browser never calls ZAPI directly. Copy from jobs `src/lib/posifApi.ts` and `/api/member-lists`, `/api/group-roles`, `/api/group-members`.
+
+### Member search — username vs display name
+
+ZAPI members payload may include: `user_name`, `nick_name`, `full_name`, `first_name`, `last_name`, `email`, `role_id`, `role_type`.
+
+**Display name resolution order** (jobs/kanban convention):
+
+```typescript
+const userName =
+  member.user_name?.trim() ||
+  member.nick_name?.trim() ||
+  member.email?.split('@')[0]?.trim() ||
+  String(member.id)
+
+const displayName =
+  member.full_name?.trim() ||
+  [member.first_name, member.last_name].filter(Boolean).join(' ').trim() ||
+  userName ||
+  member.email ||
+  `User ${member.id}`
+```
+
+Use `user_name` for sort/search labels; use `id` (`user_id`) for ACL storage.
+
+---
+
+## SDK shortcuts
+
+`@vtc/sdk` with `apiBaseUrl: getVtcApiUrl()` (`vtc-packages.mdc`):
+
+```typescript
+sdk.getUserInfo()
+sdk.getMembers(20, 0)   // paginated; not the same as member-list expansion
+sdk.getGroupInfo()
+```
+
+For **member lists and group roles**, prefer explicit ZAPI routes above — SDK coverage may be incomplete. Jobs uses direct `fetch` in `posifApi.ts`.
+
+---
+
+## Recommended document shape (private resource)
+
+```typescript
+type AccessControlled = {
+  visibility: 'private' | 'network'  // network = all in group; private = ACL
+  createdBy: string                  // user_id — always has access
+  allowedUserIds?: string[]
+  allowedRoleIds?: string[]
+  allowedListIds?: string[]        // optional; merged into allowedUserIds on write
+  memberLabels?: { userId: string; displayName: string }[]
+  roleLabels?: { roleId: string; roleName: string }[]
+  listLabels?: { listId: string; title: string }[]
+}
+```
+
+Shared app: combine with `group_id` on every query (`data-model.mdc`).
+
+---
+
+## Checklist for AI builders
+
+1. **ACL UI** → 3-segment control: **Username | Role | UserList**; selections as **chips**; copy `JobAccessEditor.tsx`.
+2. **Owner/admin** → `isAdmin(user)` bypasses ACL everywhere — **never** require them in chip lists.
+3. **Creator** → always has access; auto-add `user_id` to `allowedUserIds` on save if private.
+4. **Per-resource Username** → `allowedUserIds` + `memberLabels`; ZAPI member search picker.
+5. **Per-resource Role** → `allowedRoleIds` + `roleLabels`; ZAPI `/roles`; runtime check JWT `role.role_id`.
+6. **Per-resource UserList** → `allowedListIds` + `listLabels`; expand to user IDs on save via `/lists/{id}/members`.
+7. **List/filter API** → if `isAdmin(user)` return base filter only; else Mongo `$or` (see `buildJobListFilter`).
+8. **Never** trust client-sent `user_id` for “who is calling” — use `getAuthenticatedUser(request)`.
+9. **Env:** `VTC_API_URL` in `env_development` for local dev — **do not commit**; platform injects at deploy (`env-development.mdc`).
+10. **Catalog visibility?** → Out of scope — shell handles it; do not duplicate in app code.

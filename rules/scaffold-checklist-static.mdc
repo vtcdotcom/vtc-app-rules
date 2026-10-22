@@ -1,0 +1,47 @@
+---
+description: Ordered checklist for scaffolding a VTC static SPA (Vite) child app
+alwaysApply: false
+---
+
+# Scaffold Checklist — Static SPA (Vite)
+
+Follow `product-start.mdc` and `runtime-types.mdc`. Do not run `./start.sh` unless the user asks.
+
+**Do not copy from sibling apps** in `~/apps/` — implement from `.cursor/rules/` only (`core.mdc` #12).
+
+## 0. Plan (before files)
+
+1. **Workflow** — what task in one visit?
+2. **App type** — Shared vs Dedicated (`app-types.mdc`) — often Dedicated for platform-wide lists
+3. **Runtime** — confirm **static** (this checklist), not Next.js
+4. **Screens** — promotional landing when no JWT; authenticated list/task as home; no dashboard unless required
+5. **Data source** — ZAPI endpoints only (no app-owned Mongo unless Dedicated + future server)
+6. **Server-ish needs** — uploads, AI, email, public reads, votes/counters, reminders are all covered by ZAPI app services (`nextjs-to-vite.mdc`) — none of these justify Next.js
+
+## 1–10. Implementation order
+
+0. **Cursor rules** — `~/cursor_rules/scripts/push-stub.sh <app>` (stub only; rules stay in `~/cursor_rules/rules/`)
+
+1. **Folder skeleton** — Vite + React + TS; `src/main.tsx`, `src/App.tsx`, `index.html`, `vite.config.ts`, `start.sh` (optional EMFILE vars)
+2. **Env** — `env_development` + committed `.env.production` (app-owned keys only). Build injects `VITE_VTC_API_URL` — do not commit API URL vars (`env-development.mdc`)
+3. **Auth** — `clientAuth.ts`: `bootstrapAuthFromUrl`, `getAuthToken`, `addTokenToUrl` — `auth-bootstrap.mdc`
+3b. **ZAPI catalog** — load `GET /api/v1/developer/catalog` (or `~/api/src/zapi/developer/app_services.manifest.json`) — `zapi-developer-catalog.mdc`
+4. **ZAPI client** — `vtcApi.ts` + `vtcDocuments.ts` + `vtcPaths.ts` (protected scaffold); collection helpers in `src/components/lib/` per `zapi-collections.mdc`
+5. **I18n** — provider + `en.json` + `es.json`/`pt.json` stubs — `i18n.mdc`
+5b. **Timezone** — read shell `tz` URL param (persist via `@vtc/client` ≥ 1.2.2 `preserveThemeParams` / `resolveUserTimeZone`); format user-visible datetimes in that zone — `ui.mdc`
+6. **Promotional landing** — `LandingPage.tsx` + unauthenticated `App.tsx` (no JWT / no `?token=`) — `landing-page.mdc`. Same format as Next.js: hero, features panel, Connect to VTC path cards, trust footer.
+7. **Primary screen** — list or task UI when a token is present — `ux-screens.mdc`
+8. **UI polish** — Tailwind v4, light + dark from `mode`/`color` URL params — `ui.mdc`
+9. **Help wiki** — `public/wiki/help.md` + `public/wiki/index.json` — `app-wiki-help.mdc` (shell **Help** menu)
+10. **Build** — `npm run build` produces `dist/`; no `output: 'standalone'`
+11. **Push** — git push triggers static deploy lane on build.vtc.com (`deployment.mdc`)
+
+## Do not add
+
+- `next.config.ts`, `src/app/api/`, `mongodb.ts`, `db.ts`, `getDb()`
+- k3s hosting env vars (`MONGODB_URI`)
+- In-app OTP / login forms — unauthenticated visitors see the promotional landing (`landing-page.mdc`), then sign in on VTC
+
+## Template
+
+Start from `~/apps/builder/templates/vite-static-posif-app/` when available.

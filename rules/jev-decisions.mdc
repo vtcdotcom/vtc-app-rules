@@ -1,0 +1,97 @@
+---
+description: TypeSafe Jev — closed decisions (choice, yes/no, score) for Guide, the store wishlist, and any app. ZAPI only.
+globs: "**/typesafe.py,**/guide_decider.py,**/deciders/**,**/app_ai.py,**/api/**/ai/**"
+alwaysApply: false
+---
+
+# Jev decisions (TypeSafe)
+
+Jev is the platform model for a **closed** decision: one `choice`, any number of yes/no `noul`s, and at most one `score`, in a single call. Pinned model `jev-1.13.0` at `https://api.typesafe.ai` (`AI_TYPESAFE_MODEL`, `AI_TYPESAFE_API_URL`). It is not a chat provider.
+
+Guide already uses it (`src/zapi/services/ai/guide_decider.py`). Every other app decision — including the store wishlist runtime gate — uses the same client and the same rules.
+
+Chat, RAG, embeddings, and speech stay on DeepInfra (`ai-inference.mdc`).
+
+---
+
+## When to use it
+
+Use Jev when the outcome is a label, a yes/no, or a small score, and a wrong guess must not take an irreversible action (create, approve, build, charge, delete).
+
+A fixed label set is a Jev `choice`. A gate is a `noul`. A small ordered rating is a `score`. Prose stays on `/apps/ai/chat`.
+
+---
+
+## Who calls TypeSafe
+
+Only ZAPI: `get_typesafe_client().system_one(state, questions, timeout=3.0)` in `src/zapi/services/ai/providers/typesafe.py`.
+
+`AI_TYPESAFE_API_KEY` is server env (prefix `AI_`). The shell, Vite apps, Next.js routes, and the browser do not receive it and do not POST to `api.typesafe.ai`.
+
+One `systemone` call carries the whole question map. Extra criteria are extra questions on that call, not a second model.
+
+---
+
+## Adding a decision pack
+
+1. Own the question map in ZAPI, beside `guide_decider.py`. The caller sends **state** (small JSON facts). It does not send question text.
+2. Call `system_one`. Keep the pinned model. Timeout 3s. Retry 429/529 is already in the client.
+3. Parse `answers`. Return no decision on timeout, HTTP error, missing key, disabled flag, or a malformed body. Log it. Fall back to the deterministic rule. Do not auto-act.
+4. Give the pack its own enable flag, default **off**, same pattern as `AI_JEV_ROUTING_ENABLED`.
+5. Expose a typed route:
+   - Shell / platform (Guide, store wishlist): a ZAPI route the shell calls with the user JWT.
+   - Child apps: a named pack on the app AI proxy, same JWT and credit envelope as `/apps/ai/chat` (`nextjs-to-vite.mdc`). No TypeSafe client and no `AI_TYPESAFE_*` in the app repo.
+6. There is no “send any questions” endpoint. A new pack is a ZAPI change. Until that route exists, keep the deterministic fallback.
+
+Memoize identical state for a short window when the same turn asks twice (Guide: 120s).
+
+---
+
+## Question shape
+
+`state` lists only fields the criteria name. Guide uses `{message, locale, in_space, journey_role, installed_app_count}`. No chat history.
+
+| type | answer | use |
+|------|--------|-----|
+| `choice` | `choice`, `confidence`, `probabilities` | one label |
+| `noul` | `noul` in 0..1 | yes/no |
+| `score` | `score`, `confidence` | one scale per call |
+
+`choice` and `noul` criteria are `{option: one sentence}`. `score` criteria are a list of levels, low to high.
+
+Jev is literal and order-sensitive. Each sentence states the boundary (what the option is, and what it is not). Instructions name the state field in backticks (`` `message` ``). Keep option order stable.
+
+---
+
+## Confidence
+
+Reuse these unless a pack has a measured reason to change them:
+
+- `choice`: accept at `confidence >= 0.6` (`AI_JEV_INTENT_CONFIDENCE_FLOOR`)
+- `noul`: yes at `>= 0.75`, no at `<= 0.25` (`AI_JEV_NOUL_FLOOR`; no = `1 - floor`). The open band keeps the fallback.
+
+An irreversible action needs a confident choice **and** every required noul in the yes band.
+
+---
+
+## Store wishlist (shell)
+
+One pack decides runtime and whether Builder may start. Criterion text comes from `runtime-types.mdc`.
+
+State: the idea text plus structured hints the form already collected.
+
+- `runtime` choice: `static` | `nextjs` | `react_native` | `reject`
+  - `static` — browser UI; ZAPI services cover it (default)
+  - `nextjs` — SSR/SEO, server-only secrets, Sharp/docling/ffmpeg, or custom Mongo aggregations
+  - `react_native` — camera, mic, or offline-first native UI
+  - `reject` — not an app VTC should build
+- `approve_autobuild` noul — safe to start an automated Vite build with no human review
+- Further gates are extra nouls on the same call
+
+Start an automated build only when `runtime` is `static` at the choice floor **and** `approve_autobuild` is noul-yes **and** every extra required gate is noul-yes. `nextjs` and `react_native` are reviewed by a person. `reject` is not built.
+
+---
+
+## Reference
+
+`guide_decider.py`: `build_guide_questions`, `parse_guide_decision`, `decide_guide_turn`, `noul_true` / `noul_false`. Heuristics stay and win when Jev is off, unsure, or down. Explicit safety checks stay authoritative over a Jev yes.

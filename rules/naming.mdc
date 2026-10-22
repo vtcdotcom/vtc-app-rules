@@ -1,0 +1,65 @@
+---
+description: Naming conventions — files, collections, routes, variables
+alwaysApply: false
+---
+
+# Naming — VTC Apps
+
+API layout: `api-routes.mdc`. Response envelope: `api-routes.mdc`. Document fields: `data-model.mdc`.
+
+**Spaces** in product copy; **`group_id`** in code and JWT. Data Storage UI: **Space** / **Publisher** / **Personal** — Publisher CSV token is `app` (`app-types.mdc`).
+
+## MongoDB Collections
+
+Pattern: `{appshortname}_{collection}`
+
+```
+✅  sketch_sketches
+✅  invoicing_invoices
+❌  items
+```
+
+**Exception — Space Core Records** use fixed shared names (`suite_clients`, `suite_items`, `invoicing_invoices`, …) — `core-records.mdc`. Never create your own customer, supplier, lead, product, or invoice collection (`{app}_customers`, `{app}_clients`, `{app}_contacts`, `{app}_suppliers`, `{app}_products`, `{app}_invoices`).
+
+## API Routes
+
+```
+/api/[entity]/list     → GET
+/api/[entity]/create   → POST
+/api/[entity]/update   → PUT
+/api/[entity]/delete   → DELETE
+```
+
+## Files & Folders
+
+| Type | Convention | Example |
+|------|-----------|---------|
+| Components | PascalCase | `BackButton.tsx` |
+| Pages | lowercase | `app/items/page.tsx` |
+| Lib | camelCase | `clientAuth.ts` |
+| Hooks | `use` prefix | `useAdminAccess.ts` |
+
+## Variables
+
+- Booleans: `is`, `has`, `can` — `isAdmin`, `hasAccess`
+- Handlers: `handle` prefix — `handleSubmit`
+- Fetchers: `fetch` prefix — `fetchItems`
+- JWT fields: `user_id`, `group_id`, `role_type` (snake_case)
+
+## Document IDs
+
+```typescript
+itemId: nanoid(10)
+user_id: user.user_id
+group_id: user.group_id || '0'
+```
+
+## URL Parameters (platform-injected)
+
+| Param | Value |
+|-------|-------|
+| `token` | JWT |
+| `user` | User ID |
+| `group` | `0` = personal context (`personal-storage.mdc`); else space `group_id` |
+| `mode` | `light` or `dark` |
+| `lang` | `en`, `es`, `pt`, etc. |

@@ -1,0 +1,47 @@
+---
+description: Ordered checklist for scaffolding a VTC Expo / React Native app (VTC Store)
+alwaysApply: false
+---
+
+# Scaffold Checklist — Expo native (VTC Store)
+
+Follow `product-start.mdc` and `runtime-types.mdc`. This is the **exception** lane.
+
+**Default new apps are still static Vite** plus an optional WebView wrapper. Use Expo only when the product needs device APIs or a real native UI (camera, mic, offline, sensors).
+
+Create the folder with `~/cursor_rules/scripts/new-native.sh` (lands in `~/native/{code}`). Do **not** copy `~/memoryapp` or other sibling apps (`core.mdc` #12).
+
+## 0. Plan (before files)
+
+1. **Why native** — which device capability a WebView wrapper cannot do
+2. **App type** — Shared vs Dedicated data (`app-types.mdc`); native apps still call ZAPI
+3. **Catalog** — create the listing from the **VTC Store Publish tab** (native listing). Hidden from shell app search; shown on `channel=store`
+4. **Screens** — first useful task; no in-app OTP; no dashboard unless required
+
+## 1–10. Implementation order
+
+0. **Cursor rules** — stub from `new-native.sh` (`00-vtc-central.mdc`)
+1. **Identity** — `app.json` `expo.android.package` = `com.vtc.{code}` (factory rejects anything else). `versionCode` in `app.json` is a floor; apk-factory raises it on each Store APK and sets `expo.version` / `versionName` to `0.1.{versionCode}` so Updates shows a changing label (not a stuck `0.1.0`)
+2. **Env** — `env_development` with `EXPO_PUBLIC_VTC_API_URL=https://api.vtc.com`. Factory copies this to `.env`. Do not commit signing secrets
+3. **Auth** — `configure` + `bootstrapSession` from `@vtc/native`. Reads Store `content://com.vtc.store.session/current`, then `?token=`, then SecureStore. If none, `openStoreLogin()`. **No OTP**
+4. **ZAPI / storage / credits** — `@vtc/native`: `vtcFetch`, `uploadFile` / `presignView` (S3 presign, no AWS keys), `getBalance` / `charge` (402 → `CreditsError`). Metered AI/email/SMS/PDF already bill on the server — do not double-charge
+5. **I18n** — no hardcoded user-visible strings (`i18n.mdc`)
+6. **Primary screen** — list or task when a session exists; if signed out, prompt to open VTC App Store (`vtcstore://login?return=`)
+7. **Do not commit** `android/` unless prebuild is insufficient. Factory runs `expo prebuild --platform android --clean`
+8. **Do not add** keystore / signing Gradle config — apk-factory injects the platform key
+9. **Git** — branch `beta`, remote `zeresoft/{code}` on `git.vtc.com`
+10. **Release** — push `beta`, then `POST /api/build/android` with `build_type: "native"` and `module_code`
+
+## Do not add
+
+- In-app OTP, email/password, or a promotional web landing that asks users to log in here
+- EAS Build / EAS Submit / `expo-updates` as the Store channel (apk-factory + F-Droid repo)
+- Google Play submission for generated or thin apps
+- `*.apps.vtc.com` hosting, `next.config`, Vite, or k3s deploy env (`MONGODB_URI`)
+- `@posif/sdk`
+
+## Related
+
+- `runtime-types.mdc` — `react_native` row
+- `~/ovh/plans/vtc-android-store.md` — factory + Store
+- `~/ovh/plans/vtc-native-sdk-and-store-catalog.md` — `@vtc/native` + catalog type

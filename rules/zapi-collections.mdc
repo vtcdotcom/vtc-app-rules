@@ -1,0 +1,139 @@
+---
+description: ZAPI collection HTTP API for static Vite SPAs — list, create, update document shape
+alwaysApply: false
+globs: "**/src/components/lib/**/*.ts,**/src/lib/vtc*.ts,**/src/lib/zapi.ts"
+---
+
+# ZAPI Collections — Static SPA (Browser)
+
+**Load the catalog first:** `zapi-developer-catalog.mdc` — `GET /api/v1/developer/catalog` (or `~/api/src/zapi/developer/app_services.manifest.json`).
+
+Static apps call **ZAPI** at `VITE_VTC_API_URL` (typically `https://api.vtc.com/api/v1`) with `Authorization: Bearer` JWT. Use `src/lib/vtcApi.ts` (`vtcFetch`, `vtcAuthHeaders`) and the protected helpers `src/lib/vtcDocuments.ts`, `src/lib/vtcPaths.ts`.
+
+**Do not** use legacy Platform API paths (`/collections/{name}/list|create|update|delete`) or Mongo-style query bodies.
+
+## Document shape
+
+ZAPI stores each record as:
+
+```json
+{
+  "_id": "6a4d23c741b6804761f45df1",
+  "data": {
+    "title": "My palette",
+    "created_by": "1",
+    "group_id": "1",
+    "status": "active",
+    "created_at": "2026-07-07T16:00:00Z",
+    "updated_at": "2026-07-07T16:00:00Z"
+  }
+}
+```
+
+- Business fields live inside **`data`**, using **snake_case** — see `data-model.mdc` (`created_at`, `updated_at`, `created_by`, `group_id`).
+- App-facing TypeScript types may use camelCase; **normalize** between API docs and UI types in collection helpers under `src/components/lib/`.
+- Document id for routes and keys is **`_id`** from the API (expose as `id` in UI types if needed).
+
+## List documents
+
+```http
+GET /collections/{collection}/documents?page=1&page_size=100
+Authorization: Bearer {jwt}
+```
+
+Response:
+
+```json
+{
+  "documents": [ { "_id": "...", "data": { } } ],
+  "total": 1,
+  "page": 1,
+  "page_size": 100,
+  "total_pages": 1
+}
+```
+
+- `vtcFetch` URL = `getVtcApiBase()` + path — **path must not include `/api/v1`** (base already ends with it). Use `vtcCollectionPath()` for collection paths.
+
+## Get one document
+
+```http
+GET /collections/{collection}/documents/{_id}
+```
+
+Use `getDocument(collection, id)`.
+
+## Create document
+
+```http
+POST /collections/{collection}/documents
+Content-Type: application/json
+
+{ "data": { "title": "...", "created_by": "1", "status": "active", "created_at": "...", "updated_at": "..." } }
+```
+
+Use `createDocument(collection, dataFields)` — it wraps `{ data }` for you.
+
+## Update document
+
+```http
+PUT /collections/{collection}/documents/{_id}
+Content-Type: application/json
+
+{ "data": { "title": "...", "updated_at": "..." } }
+```
+
+Use `updateDocument(collection, id, dataFields)`. Soft delete: `updateDocument(..., { status: 'deleted', updated_at })`.
+
+## Forbidden patterns
+
+| Pattern | Why |
+|---------|-----|
+| `PUT /collections/.../documents/query` | **Not a query endpoint** — ZAPI treats `query` as a document id → validation errors |
+| `POST/PUT` body `{ filter, sort, limit }` without `data` | Mongo query DSL — not ZAPI |
+| Flat `POST` body `{ title, ... }` without `data` wrapper | Missing required `data` field |
+| camelCase in `data` (`createdAt`, `creatorId`) | Prefer snake_case per `data-model.mdc` |
+
+## Shared app scoping
+
+When `group_id !== '0'`, every list helper must filter to the active space:
+
+```typescript
+const filter = { group_id: user.group_id, status: { $ne: 'deleted' } } // logical filter in app code
+```
+
+Apply in collection helpers after `listAllDocuments()` — see `app-types.mdc`.
+
+## Per-document ACL (ZAPI-enforced)
+
+When a collection has document ACL enabled (space admin via `POST /collections/{name}/document-acl` with `{ "enabled": true }`), ZAPI filters list/get and guards update/delete server-side. Static Vite apps do **not** need `src/app/api/` for ACL — store ACL fields on each document and let ZAPI enforce.
+
+**Document fields** (inside `data`, snake_case):
+
+| Field | Purpose |
+|-------|---------|
+| `visibility` | `"network"` = all space members; omit or `"private"` = allowlist only |
+| `created_by` | Creator `user_id` — auto-stamped on create |
+| `allowedUserIds` | Specific people who may read |
+| `allowedRoleIds` | Group-defined role IDs (`role.role_id`) |
+| `allowedListIds` | Member list IDs — ZAPI checks caller's list memberships at read time |
+
+**Admin bypass:** JWT `role_type` `"1"`/`"2"` sees all documents.
+
+**Write policy:** Pair document ACL with `POST /collections/{name}/write-policy` `{ "policy": "creator_or_admin" }` for typical private-sharing apps.
+
+**Builder:** On build/publish, Builder enables document ACL + `creator_or_admin` write policy for collections whose plan has `inAppAccess.visibility: private`.
+
+**Public read:** `GET /public/collections/...` only returns documents with `visibility: network` when document ACL is enabled.
+
+## Collection helpers (editable)
+
+Codegen adds per-entity files under `src/components/lib/` (e.g. `paletteApi.ts`):
+
+1. Import `listAllDocuments`, `getDocument`, `createDocument`, `updateDocument` from `../../lib/vtcDocuments`
+2. `normalizeX(doc: ZapiDocument)` — map `_id` + `data` → app types
+3. Never reimplement raw fetch shapes — extend the protected scaffold only
+
+## Reference
+
+Protected scaffold ships in `~/apps/builder/templates/vite-static-posif-app/src/lib/`.

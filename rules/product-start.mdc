@@ -1,0 +1,81 @@
+---
+description: VTC product model and workflow order — plan before code
+alwaysApply: true
+---
+
+# Product Start — VTC Apps
+
+**Terminology:** UI says **Space**; code uses `group_id`, `group`, `groupid`. Data Storage UI says **Space** / **Publisher** / **Personal** — Publisher CSV token is `app`. **Shared** / **Dedicated** are legacy hosting names — `app-types.mdc`.
+
+## What VTC Is
+
+- **Apps are tools** — small utilities opened from the VTC shell, not monolithic products.
+- **Spaces are the primary tenant** for Shared apps — business data belongs to the active space, not the app author alone.
+- **Dedicated apps share one dataset** — one fixed database; same records for every space using the app (e.g. manufacturer price lists).
+- **Apps may be cloned or remixed** — portable collection names, env-driven URLs, patterns that survive a new `appshortname`.
+
+## How Users Reach Apps
+
+- Shell opens publisher child apps on `*.apps.vtc.com` with `?token=&user=&group=` injected (platform/network apps on bare `*.vtc.com` are a separate lane — https://vtc.com/developers).
+- Child apps **cannot** read `app.vtc.com` localStorage — bootstrap from URL + `posif_token` only (`auth-bootstrap.mdc`).
+- **Personal context** (`group=0`): user-scoped work where the app declares **Personal** storage — `personalDb()`, not a space silo (`personal-storage.mdc`).
+- **Space context** (`group` non-zero): Shared apps use the space silo via `connectTenantDb()` + JWT; Dedicated apps still use the publisher's fixed DB.
+
+## Publish Options (shell — not app code)
+
+At publish, the developer chooses **Data Storage** (capability set), **Available in** (which homes list the app), and **Access** (how wide the Space catalog is). Storage is not the same as catalog listing.
+
+| Data Storage (UI checkboxes) | CSV | Code |
+|------------------------------|-----|------|
+| **Space** | `space` | Per-space silo — `getDb()` / `connectTenantDb()` |
+| **Publisher** | `app` | Publisher-space DB — `connectDB()` only. One space collects all app data. |
+| **Personal** | `personal` | User bucket — `personalDb()` (`personal-storage.mdc`) |
+| **Space + Personal** | `space,personal` | Dual-scope (album, tasks) — space silo + personal store |
+
+Space and Publisher are exclusive (both space-backed). Personal combines with **Space** only — never Publisher. Publisher is one publisher-space database; `app,personal` is invalid. At least one required. How to create or convert: `personal-storage.mdc` → **Creating a personal or dual-scope app**.
+
+| Available in (UI checkboxes) | CSV | Meaning |
+|------------------------------|-----|---------|
+| **Space** | `space` | List in Space catalogs |
+| **Personal** | `personal` | List in Personal apps (MYAPPS) |
+| **Space + Personal** | `space,personal` | Both homes |
+
+A Publisher (`app`) app can list personally without Personal **storage**. Personal storage (`personalDb()`) is a different question. At least one Available in lane is required. Stored as `group_apps.available_in`. When unset, catalogs infer from the previous storage / `personal_app` / games guess so lists do not jump.
+
+**Available in** is shown only when storage can serve more than one home (Publisher, or Space + Personal). Space-only storage is listed in Space catalogs. Personal-only storage is listed in Personal apps. A Space silo cannot open from Personal apps (`group=0`).
+
+| Access (UI) | Meaning |
+|-------------|---------|
+| **Space** | Only this space's members |
+| **Network** | Spaces in this network can add from catalog |
+| **Platform** | Any space on the platform can add from catalog |
+
+Access applies only when **Available in Space** is checked. If Space listing is off (Personal only), Access is hidden and visibility is forced to Platform so the app can open from the personal dashboard (`group=0`). Catalog gates stay in the shell — **do not implement in app code** (`access-control.mdc` is in-app ACL only).
+
+## Design Rules
+
+1. Choose **Space / Publisher / Personal** from **how data must be stored** — `app-types.mdc`, `personal-storage.mdc`. Publisher token is `app`.
+2. Default to **functional entry screens** (list or task) in the **standard App Shell** — no dashboard unless required (`ux-screens.mdc`, `ui.mdc`).
+3. All user-facing copy **i18n-ready** from day one (`i18n.mdc`).
+4. **Source of truth = Cursor rules** — load and follow `.cursor/rules/` (`README.md` task index). Do not treat other apps in `~/apps/` as templates (`core.mdc` #12).
+
+## Workflow Order (before coding)
+
+Follow this sequence. Implementation steps: `scaffold-checklist.mdc`.
+
+1. **Business workflow** — what task in one visit? Who acts (member vs admin)?
+2. **App type** — Space, Publisher, and/or Personal? — `app-types.mdc`, `personal-storage.mdc`
+3. **Runtime** — Next.js (k3s), static Vite SPA, or Expo native (VTC Store only)? — `runtime-types.mdc`
+4. **Screens** — landing, list/task as home; create/edit; no default dashboard
+4. **Data model** — `{appshortname}_{collection}`, fields, soft delete — `data-model.mdc`
+5. **APIs** — list/create/update/delete, scoping per app type — `api-routes.mdc`
+6. **UI & i18n** — App Shell, Tailwind v4, dual theme — `ui.mdc`, `i18n.mdc`
+7. **Code last** — lib modules, env — `lib-canonical.mdc`, `env-development.mdc`
+
+When the user gives a one-line idea, confirm app type and primary screen in your plan, then scaffold.
+
+## User-facing platform changes
+
+A feature, fix, or improvement someone should read about is published into **VTC Updates** in the same work (`vtc-changelog.mdc`). Write `.vtc/changelog/<id>.json` in the repo that shipped it, then run `~/apps/vtcupdates/scripts/publish-vtc-note.mjs`. Commits and deploys do not add the note. Skip refactors and chores. Notes for one space's own product stay in the Features app.
+
+When a new app is created and listed in the app store, publish one note in that app's repo: `id` `app-<appshortname>`, `kind` `feature`, `product` `App store`, `title` the app name. Do this when it is listed (Available in Space and/or Personal, or the VTC Store), not when the repo is only scaffolded.

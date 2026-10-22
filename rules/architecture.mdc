@@ -1,0 +1,154 @@
+---
+description: App architecture, database patterns (Shared vs Dedicated), folder structure
+alwaysApply: false
+globs: "**/lib/db.ts,**/lib/mongodb.ts,**/app/layout.tsx,**/LayoutContent.tsx"
+---
+
+# Architecture — VTC Apps
+
+Auth: `auth-bootstrap.mdc`. API layout: `api-routes.mdc`. App types: `app-types.mdc`.
+
+## Two App Types
+
+**Dedicated app** — Publish UI **Publisher** (CSV token `app`); one fixed publisher-space database; credentials at publish; always `connectDB()`; never SDK `getDb()`.
+
+**Shared app** — tenanted DB per space when `group_id !== '0'`; SDK `getDb()` in production; localhost dev always `connectDB()`.
+
+**Personal storage** — not a third `getDbWithAuth()` branch. Use SDK `personalDb()` (`@vtc/sdk` ≥ 1.4.0) for user-owned rows. Full rules: `personal-storage.mdc`.
+
+```typescript
+// src/lib/db.ts — Shared app
+export async function getDbWithAuth(request: NextRequest) {
+  const user = getAuthenticatedUser(request)
+  if (!user) throw new Error('Authentication required')
+
+  if (process.env.MONGODB_URI?.includes('localhost')) {
+    return { db: await connectDB(user), user }
+  }
+
+  if (user.group_id && user.group_id !== '0') {
+    return { db: await getDb(request), user }
+  }
+
+  return { db: await connectDB(user), user }
+}
+
+export async function getDbOptionalAuth(request: NextRequest) {
+  try { return await getDbWithAuth(request) }
+  catch { return { db: null, user: null } }
+}
+```
+
+```typescript
+// src/lib/db.ts — Dedicated app
+export async function getDbWithAuth(request: NextRequest) {
+  const user = getAuthenticatedUser(request)
+  if (!user) throw new Error('Authentication required')
+  return { db: await connectDB(user), user }
+}
+```
+
+## Required File Structure
+
+```
+src/
+  app/
+    layout.tsx
+    LayoutContent.tsx        ← bootstrapAuthFromUrl + ThemeProvider + I18nProvider
+    page.tsx                 ← Promotional landing (no token) — landing-page.mdc
+    api/
+      [entity]/
+        list/route.ts
+        create/route.ts
+        update/route.ts
+        delete/route.ts
+  lib/
+    jwt.ts
+    auth.ts
+    clientAuth.ts
+    db.ts
+    mongodb.ts
+  components/
+    BackButton.tsx
+    providers/
+      ThemeProvider.tsx
+      I18nProvider.tsx
+postcss.config.mjs
+src/app/globals.css
+start.sh
+env_development
+.env.production
+```
+
+## Role System
+
+```typescript
+// role_type: "1" = Owner, "2" = Admin, "3"+ = Member
+import { isAdmin, isOwner } from '@/lib/auth'
+if (!isAdmin(user)) {
+  return NextResponse.json(
+    { success: false, code: 'AUTH_403', error: 'Admin required' },
+    { status: 403 }
+  )
+}
+```
+
+In-app ACL (member lists, space roles): `access-control.mdc`. Catalog visibility (Space/Network/Platform): shell only.
+
+## URL Sharing (Via)
+
+Shared URLs MUST include `?token=`. Via API uses `Authorization: Bearer` (platform service).
+
+```typescript
+const longUrl = addTokenToUrl(`https://yourapp.vtc.com/item/${itemId}`)
+const response = await fetch('https://via.posif.com/api/shorten', {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    url: longUrl,
+    appName: 'your-app',
+    reference: `your-app-${itemId}-${user.group_id}`,
+    expiresIn: 604800,
+  }),
+})
+```
+
+## Platform API (ZAPI)
+
+Host: **`https://api.vtc.com`** via `VTC_API_URL` (`env-development.mdc`). Use `getVtcApiUrl()` — legacy `POSIF_API_URL` still injected in parallel.
+
+- Shared app production: `getDb(request)` → `GET ${getVtcApiUrl()}/api/v1/db/` with `Authorization: Bearer <JWT>`
+- JWT `group_id` loads space silo (`db_{groupId}_2`); auto-creates when missing
+- Localhost dev: `connectDB(user)` with `db_{groupId}_2`
+
+## Personal store
+
+```typescript
+import { personalDb } from '@vtc/sdk'
+
+const store = personalDb(request) // or personalDb(request, token)
+const col = store.collection('myapp_notes')
+await col.insertOne({ title: 'hello', status: 'active' })
+const rows = await col.find({ status: { $ne: 'deleted' } }, { limit: 50 })
+```
+
+Do **not** return `personalDb()` from `getDbWithAuth()`. Keep `getPersonalStore(request)` (or equivalent) separate. Never use `getPersonalDb()` for new app data.
+
+## SDK Methods
+
+```typescript
+import sdk from '@vtc/sdk'
+import { getVtcApiUrl } from '@/lib/env'
+
+sdk.getUserInfo()
+sdk.getGroupInfo()
+sdk.getMembers(20, 0)
+sdk.getGroups(20, 0, 'owner')
+sdk.getNetworks(20, 0, 'member')
+```
+
+Pass `apiBaseUrl: getVtcApiUrl()` so SDK calls hit **api.vtc.com**.
+
+## RAG (when applicable)
+
+See `ai-inference.mdc` — server-side only.

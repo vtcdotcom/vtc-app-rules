@@ -1,0 +1,139 @@
+---
+description: Platform Ads — integrate child apps with @vtc/sdk/ads, monetize settings, capable-app registry
+alwaysApply: false
+---
+
+# Platform Ads (`@vtc/sdk/ads`)
+
+Shared ad pool across VTC Spaces. **Advertisers** buy impressions from Credits Wallet; **publishers** earn USD (50/50 split) in Earnings Wallet.
+
+**Canonical API spec:** `~/apps/app/docs/ads-api-spec.md`  
+**ZAPI routes:** `/api/v1/ads/*` (`~/api/src/zapi/api/routers/ads.py`)  
+**Capable-app registry:** `~/api/src/zapi/services/ads_capable_apps.py`  
+**Shell admin UI:** Space/Network profile → **Ads** tab (`GroupProfileAdsTab.svelte`)
+
+---
+
+## When the user asks to add advertising to an app
+
+Follow this checklist in order.
+
+### 1. Pick formats (do not expose all four)
+
+| Format | Use case | Example apps |
+|--------|----------|--------------|
+| `feed-card` | 16:9 image card in timelines | `newsfeed`, `forum`, `blog` |
+| `text` | Text-only sponsored row | `newsfeed`, `forum` |
+| `square-card` | 1:1 grid tiles | `classifieds`, `shop` |
+| `vertical` | 9:16 video/image full-screen | `reels` |
+
+Request **only** formats the UI can render. The app passes `format` on each `getAd()` call; delivery matches campaign creative to that format.
+
+### 2. Register the app (required before delivery works)
+
+Add `module_code` → supported formats in **`~/api/src/zapi/services/ads_capable_apps.py`**:
+
+```python
+ADS_CAPABLE_APPS: dict[str, tuple[str, ...]] = {
+    "newsfeed": ("feed-card", "text"),
+    "reels": ("vertical",),
+    # "forum": ("feed-card", "text"),  # add when integration ships
+}
+```
+
+`module_code` must match the app’s canonical code (`public/.well-known/ai-manifest.json`, `APP_NAME`, credits `X-Module-Code`).
+
+Until registered, `POST /ads/request` returns `null` and the app does not appear in Monetize checkboxes.
+
+### 3. Bump SDK
+
+```json
+"@vtc/sdk": "^1.2.1"
+```
+
+Import from **`@vtc/sdk/ads`** (not a separate package):
+
+```typescript
+import { getAd, trackImpression, trackClick } from '@vtc/sdk/ads'
+```
+
+### 4. Integrate in the app
+
+**Server or client** (both valid; prefer server route if hiding token logic):
+
+```typescript
+const ad = await getAd({
+  format: 'feed-card',           // must be in registry for this module_code
+  moduleCode: 'newsfeed',
+  groupId: String(jwt.group_id),
+  networkId: String(jwt.network_id),
+  token: userJwt,
+  placement: 'home-feed',        // optional string for analytics
+})
+// null = no fill (monetize off, no budget, format mismatch, frequency cap, etc.)
+
+if (ad) {
+  // After ≥2s visible (feeds) or when slot becomes active (reels)
+  await trackImpression(ad.tracking_token, { token: userJwt })
+  // On CTA click
+  await trackClick(ad.tracking_token, { token: userJwt })
+  // Then open ad.destination_action (external href or space_path)
+}
+```
+
+**UI rules:**
+- Always show **Sponsored** (`ad.sponsored_label_key` → i18n `ads.sponsored`)
+- Use `density_hint.feed_every_n` / `grid_every_n` from the placement to space ads among organic items
+- Do not show ads in guest/anonymous mode (no JWT)
+- Billable event is **impression** (1 credit = 1¢ by default); clicks are free unless platform changes `CLICK_CREDITS_PER_CLICK`
+
+**Reference implementations:**
+- `~/apps/newsfeed` — `lib/platform-ads.ts`, `components/PlatformAdCard.tsx`, `lib/feed-ads.ts`
+- `~/apps/reels` — `src/lib/platformAds.ts`, `src/app/api/ads/feed/route.ts`, `AdVideoPlayer.tsx`
+
+### 5. Turn on monetize (publisher / Space owner)
+
+Advertising is **not** enabled per app in code. The **Space admin** enables it in the shell:
+
+1. Open Space profile → **Ads** tab  
+2. Check **Monetize** (same control as “Enable advertising”)  
+3. Optionally limit **Apps that may show ads** (dashboard apps ∩ capable registry only)  
+4. Set **Ad frequency** (low / medium / high → `density_hint` for spacing)
+
+No app-side switch is required beyond calling `getAd()` — delivery checks `ads_enabled` on the publisher Space via ZAPI.
+
+**Advertisers** use the same Ads tab → **Advertise** to create campaigns (budget in credits, 1¢/view default).
+
+### 6. Platform knobs (not in Space UI)
+
+| Constant / env | Purpose |
+|----------------|---------|
+| `ADS_IMPRESSION_CREDITS_PER_VIEW` | Cost per view (default `1` = 1¢) |
+| `ADS_CLICK_CREDITS_PER_CLICK` | Click cost (default `0`) |
+| `ADS_MAX_IMPRESSIONS_PER_USER_PER_CREATIVE_PER_DAY` | Repeat cap per user/creative (default `5`) |
+
+Tune via API deploy env — no child-app or shell change.
+
+### 7. Discovery endpoints
+
+| Endpoint | Use |
+|----------|-----|
+| `GET /api/v1/ads/pricing` | Show “1¢ per view” in UIs |
+| `GET /api/v1/ads/capable-apps` | List integrated apps + formats (Monetize checkboxes) |
+
+---
+
+## Do not
+
+- Add per-campaign or per-Space impression/click rates in app UI (platform-controlled)
+- Call `getAd()` with a format not listed for that `module_code` in `ads_capable_apps.py`
+- Show Monetize app checkboxes for apps not in the registry
+- Use legacy reels-only Mongo ad settings as the source of truth for platform pool (platform monetize + `getAd` wins)
+- Hardcode CPM; show **cost per view** to advertisers (1 credit = 1 US cent)
+
+---
+
+## Tests
+
+- API: `~/api/src/zapi/tests/unit/test_ads_service.py`, `test_ads_capable_apps.py`
+- After registry change, verify delivery + Monetize list include the new `module_code`

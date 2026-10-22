@@ -1,0 +1,4 @@
+# Bump when shared VTC Cursor rules change materially.
+# MINOR = edits/additions; MAJOR = breaking renames or workflow changes.
+# Cursor: see rule-pack-version.mdc — bump this line whenever you edit rules here.
+Rule pack version: vtc-app-rules-v2.69

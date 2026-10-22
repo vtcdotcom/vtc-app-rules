@@ -1,0 +1,45 @@
+---
+description: Ordered checklist for scaffolding a new VTC Next.js app
+alwaysApply: false
+---
+
+# Scaffold Checklist — VTC Apps
+
+Follow `product-start.mdc` order. Do not run `./start.sh` unless the user asks.
+
+**Do not copy from sibling apps** in `~/apps/` — implement from `.cursor/rules/` only (`core.mdc` #12). Other repos are often outdated.
+
+## 0. Plan (before files)
+
+1. **Workflow** — what task in one visit?
+2. **App type** — Space, Publisher, and/or Personal? — `app-types.mdc`, `personal-storage.mdc`
+3. **Runtime** — Next.js (server/k3s) or static Vite SPA? — `runtime-types.mdc`
+4. **App short name** — `{appshortname}_*` collections (Next.js / Shared only) — `naming.mdc`
+5. **Screens** — list/task as home; no dashboard unless required — `ux-screens.mdc`
+6. **Entities** — fields, search columns, soft delete — `data-model.mdc`, `business-patterns.mdc`
+7. **Realtime?** — `ws.vtc.com` + `NEXT_PUBLIC_WS_URL` — `realtime.mdc` (Next.js only)
+8. **Map UI?** — `maps.vtc.com` + `NEXT_PUBLIC_MAP_STYLE_URL` / `VITE_MAP_STYLE_URL` — `maps.mdc`
+
+## 1–12. Implementation order
+
+0. **Cursor rules** — `~/cursor_rules/scripts/push-stub.sh <app>` (stub only; rules stay in `~/cursor_rules/rules/`)
+
+1. **Folder skeleton** — `src/app`, `src/lib`, providers, **`start.sh` (EMFILE guards — `dev-watch.mdc`)**, `output: 'standalone'`, **`dev-watch.mdc` next.config (`turbopack: {}` + webpack hook) + globals.css**, **`package.json` `"build": "next build --webpack"`** — `architecture.mdc`, `deployment.mdc`
+2. **Env** — `env_development` + committed `.env.production` (app-specific keys only; identity URL/name injected at build — `deployment.mdc`) — `env-development.mdc`
+3. **Lib modules** — `jwt.ts`, `auth.ts`, `clientAuth.ts` (`preserveThemeParams`, `getPersistedThemeParams`, full `addTokenToUrl`), `accent.ts`, `mongodb.ts`, `tenantDb.ts` (Shared), `db.ts`, `getPersonalStore` when Personal — `lib-canonical.mdc`, `personal-storage.mdc`
+4. **Auth bootstrap** — URL `token`/`user`/`group`/`tz`, `bootstrapAuthFromUrl`, `preserveThemeParams`, format times with `resolveUserTimeZone()` — `auth-bootstrap.mdc`, `ui.mdc`
+5. **I18n** — `I18nProvider`, `en.json` + `es.json`/`pt.json` stubs — `i18n.mdc`
+6. **Promotional landing** — `LandingPage.tsx` + unauthenticated `page.tsx` — `landing-page.mdc`
+7. **Layout** — `LayoutContent.tsx`: `bootstrapAuthFromUrl` + `preserveThemeParams`, resolve `color` from URL → env → `posif_color`, `ThemeProvider` + `I18nProvider` — `ui.mdc`, `auth-bootstrap.mdc`
+8. **Authenticated home** — primary list or task screen — `ux-screens.mdc`
+9. **API routes** — list/create/update/delete — `api-routes.mdc`, `business-patterns.mdc`
+9b. **AI manifest** (integratable apps) — `public/.well-known/ai-manifest.json` — `ai-manifest.mdc`
+10. **Create / edit UI** — validation, loading, empty, error states — `ux-screens.mdc`, `ui.mdc`. Dual-scope (`space,personal`): space vs personal **scope picker** on create when launched from a space — `personal-storage.mdc`
+10b. **Publish storage** — tell the user to set shell Publish → Data Storage to match the plan (`personal` / `space,personal` / `space` / Publisher=`app`). Not Publisher+Personal — Publisher already uses a publisher space. Not app code.
+11. **UI polish** — App Shell (`@vtc/ui@^1.1.1`), **`typography.mdc`** + **Typography Standard** in `ui.mdc`, Tailwind v4, light + dark, **dark mode accent contrast** (`globals.css` + `ThemeProvider` — `ui.mdc`), sticky header (**hide app name when shell-embedded** — `ui.mdc`) — `ui.mdc`
+12. **RAG / AI only** — `deepinfra.ts`, Docling — `ai-inference.mdc`
+12b. **Metered AI billing** (DeepInfra) — copy into `src/lib/`:
+    - `creditsPricing.ts` — `getCreditsChargeMultiplier`, `creditsFromWholesaleUsd`, `estimateTokenWholesaleUsd` — `platform-metering.mdc`
+    - `meteredCredits.ts` — server-only ZAPI client (`POST /api/v1/billing/metered-charge` with `ZAPI_INTERNAL_SECRET`); never call from browser
+    - Charge **space owner** after successful inference with real token `usage`; pre-check via `POST /api/v1/billing/metered-balance-check`
+    - **MapTiler** — platform absorbs cost; do not meter map sessions

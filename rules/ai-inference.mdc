@@ -1,0 +1,132 @@
+---
+description: LLM inference — DeepInfra only (chat, RAG, speech Voxtral, TTS Orpheus) — server-side only. Groq and Cerebras are retired.
+globs: "**/deepinfra.ts,**/llm.ts,**/groq.ts,**/cerebras.ts,**/rag/**,**/embed/**,**/api/**/chat/**,**/api/**/search/**,**/api/**/documents/**,**/api/**/ai/**,**/api/**/screen-recordings/**,**/api/**/transcribe/**,**/api/**/revoice/**"
+alwaysApply: false
+---
+
+# AI & Document Intelligence — VTC Apps
+
+Apply when the app uses chat, RAG, embeddings, document ingestion, speech-to-text, or text-to-speech.
+
+**Closed decisions** (one label, a yes/no, a score) use TypeSafe Jev in ZAPI — `jev-decisions.mdc`. Do not use chat models to classify a fixed set.
+
+**Static Vite apps:** do not hold provider keys — call the ZAPI proxy `POST /apps/ai/chat|embeddings|rerank` with the user JWT (`nextjs-to-vite.mdc`). This file covers **Next.js** server-side provider access.
+
+**Billing:** space owner pays **2× wholesale** from personal wallet — `platform-metering.mdc`. Price vars are platform-injected (`CREDITS_CHARGE_MULTIPLIER`, `DEEPINFRA_*_PRICE_PER_M`, etc.). MapTiler is not metered.
+
+**All LLM keys are platform-injected at build** — do not commit `DEEPINFRA_*` or `AI_*` provider vars to `.env.production` (`env-development.mdc`). Set copies in `env_development` only for local testing.
+
+**Server-side only** — never expose API keys to the browser (`NEXT_PUBLIC_` / `VITE_`).
+
+---
+
+## Provider: DeepInfra only
+
+**DeepInfra is the only LLM provider on VTC** (Mark, 2026-10-17). **Groq and Cerebras are retired:** their keys are revoked and the build server strips any `GROQ_*` / `CEREBRAS_*` / `AI_GROQ_*` / `AI_CEREBRAS_*` vars from builds. Do not add `groq.ts`, `cerebras.ts`, `groq-sdk`, or api.groq.com / api.cerebras.ai URLs. If you find them in an existing app, replace them with the DeepInfra client below.
+
+| Use | Model ID | Env var (injected) | Wholesale per 1M tokens |
+|-----|----------|--------------------|-------------------------|
+| **Fast chat / tool calls / JSON** (default) | `openai/gpt-oss-120b-Turbo` | `DEEPINFRA_CHAT_MODEL` | $0.15 in / $0.60 out (`DEEPINFRA_CHAT_INPUT_PRICE_PER_M` / `DEEPINFRA_CHAT_OUTPUT_PRICE_PER_M`) |
+| Cheap chat / summaries | `Qwen/Qwen3-32B` | `DEEPINFRA_INFERENCE_MODEL` | $0.08 in / $0.28 out (`DEEPINFRA_INFERENCE_*_PRICE_PER_M`) |
+| Tiny / high-volume | `meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo` | set in app code | $0.02 in / $0.04 out |
+
+`AI_DEFAULT_PROVIDER` is always `deepinfra`. Replacements for old model IDs: Cerebras `gpt-oss-120b` → `openai/gpt-oss-120b-Turbo`; Groq `qwen/qwen3-32b` → `Qwen/Qwen3-32B`; Groq `llama-3.1-8b-instant` → `meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo`; `llama-3.3-70b` → `meta-llama/Llama-3.3-70B-Instruct-Turbo`.
+
+Use the **Turbo** gpt-oss tier — the base `openai/gpt-oss-120b` tier is often "Model busy" (429) and much slower.
+
+**Reasoning:** send `reasoning_effort: "low"` for gpt-oss (env `DEEPINFRA_REASONING_EFFORT`, default `low`). For Qwen3 send `reasoning_effort: "none"` unless you need thinking — it is ~3× faster. If `message.content` is empty, fall back to `message.reasoning_content`.
+
+**Tool calls:** DeepInfra accepts OpenAI `tools` / `tool_choice` on both gpt-oss-120b-Turbo and Qwen3-32B. Keep tool names to `[a-zA-Z0-9_-]` (map `a.b` → `a__b` and back).
+
+```typescript
+// src/lib/deepinfra.ts — DeepInfra chat (OpenAI-compatible)
+const BASE = `${(process.env.DEEPINFRA_API_URL || 'https://api.deepinfra.com').replace(/\/$/, '')}/v1/openai`
+export const CHAT_MODEL = process.env.DEEPINFRA_CHAT_MODEL || 'openai/gpt-oss-120b-Turbo'
+
+export async function chat(messages: { role: string; content: string }[], model = CHAT_MODEL) {
+  const res = await fetch(`${BASE}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.DEEPINFRA_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      ...(model.includes('gpt-oss')
+        ? { reasoning_effort: process.env.DEEPINFRA_REASONING_EFFORT || 'low' }
+        : { reasoning_effort: 'none' }),
+    }),
+  })
+  const data = await res.json()
+  const msg = data.choices?.[0]?.message
+  return { content: msg?.content || msg?.reasoning_content || '', usage: data.usage, model }
+}
+```
+
+Bill with the price vars for the model you actually called (`platform-metering.mdc`).
+
+---
+
+## DeepInfra (RAG + speech)
+
+| Role | Default model ID | Env var | Wholesale unit |
+|------|------------------|---------|----------------|
+| Fast chat | `openai/gpt-oss-120b-Turbo` | `DEEPINFRA_CHAT_MODEL` | $0.15 in / $0.60 out per 1M **tokens** |
+| Inference | `Qwen/Qwen3-32B` (build server) | `DEEPINFRA_INFERENCE_MODEL` | $0.08 in / $0.28 out per 1M **tokens** |
+| Embeddings | `Qwen/Qwen3-Embedding-0.6B` | `DEEPINFRA_EMBEDDING_MODEL` | $0.01 per 1M **tokens** |
+| Reranking | `Qwen/Qwen3-Reranker-0.6B` | `DEEPINFRA_RERANKER_MODEL` | $0.01 per 1M **tokens** |
+| Speech-to-text | `mistralai/Voxtral-Mini-3B-2507` | `AI_SPEECH_MODEL` (ZAPI) | $0.00100 per **audio minute** |
+| Text-to-speech | `canopylabs/orpheus-3b-0.1-ft` | `AI_TTS_MODEL` (ZAPI) | $7.00 per 1M **characters** |
+
+- Chat: `POST ${DEEPINFRA_API_URL}/v1/openai/chat/completions`
+- Embeddings: `POST ${DEEPINFRA_API_URL}/v1/openai/embeddings`
+- Implement in `src/lib/deepinfra.ts` — `lib-canonical.mdc`
+
+**DeepInfra rates are model-specific.** When any model ID changes, update the matching price env var to match [deepinfra.com/pricing](https://deepinfra.com/pricing). Do not reuse Qwen3-32B token rates for Voxtral or Orpheus.
+
+---
+
+## Speech & TTS (Screen Recorder — ZAPI-hosted)
+
+**Apps do not call Voxtral or Orpheus directly.** Proxy to ZAPI; ZAPI runs DeepInfra and bills via existing metering.
+
+| App route (proxy) | ZAPI route | Model | Usage |
+|-------------------|------------|-------|-------|
+| `POST /apps/ai/transcribe` | storage key → Voxtral | Voxtral (`AI_SPEECH_MODEL`) | ASR — audio minutes (max 10 MB). Personal context bills the user. |
+| `POST /apps/ai/vector-upsert` | vaultapi memories (namespaced `app:{app_code}`) | same embeddings as `/apps/ai/embeddings` | Isolated from Guide memories |
+| `POST /apps/ai/vector-search` | vaultapi `/api/v1/memories/search` | embeddings | Filter + namespace by JWT user + `app_code` |
+| `POST /apps/ai/vector-delete` | vaultapi `/api/v1/memories/delete` | — | Soft-delete companion |
+| `POST …/transcribe` (screen recorder) | `POST /api/v1/groups/{gid}/screen-recordings/{id}/transcribe` | Voxtral (`AI_SPEECH_MODEL`) | ASR — audio minutes |
+| `POST …/revoice` | `POST …/screen-recordings/{id}/revoice` | Orpheus (`AI_TTS_MODEL`) | TTS — characters |
+
+ZAPI implementation: `deepinfra_speech.py`, `deepinfra_tts.py`, `screen_recording_billing.py`.
+
+**Wholesale cost priority:**
+
+1. DeepInfra `inference_status.cost` when returned (Voxtral JSON inference; Orpheus native inference endpoint)
+2. Env estimate: `AI_SPEECH_USD_PER_MINUTE` × duration, or `AI_TTS_USD_PER_MILLION_CHARS` × character count
+
+**ZAPI env** (`/opt/zeresoft/.env` on server1 — not app build inject):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CREDITS_CHARGE_MULTIPLIER` | `2` | Markup on all metered usage |
+| `AI_SPEECH_MODEL` | `mistralai/Voxtral-Mini-3B-2507` | STT model |
+| `AI_SPEECH_USD_PER_MINUTE` | `0.00100` | Voxtral list price fallback |
+| `AI_TTS_MODEL` | `canopylabs/orpheus-3b-0.1-ft` | TTS model |
+| `AI_TTS_USD_PER_MILLION_CHARS` | `7.0` | Orpheus list price fallback |
+
+Reference app: `~/apps/screenrecord` — proxies transcribe/revoice to ZAPI after media job is ready.
+
+## RAG pipeline
+
+**Docling → chunk → embed → store → retrieve → rerank → infer**
+
+- Default chunk size: ~512 tokens, overlap ~64
+- Store vectors in MongoDB unless the app specifies otherwise
+- **docling** server-side only for PDFs/Office
+
+## Docling
+
+Parse uploads before chunking when layout, tables, or structure matter. Persist chunks in `{appshortname}_*` collections.

@@ -1,0 +1,181 @@
+---
+description: Unauthenticated promotional landing — features panel + Connect to VTC cards
+globs: "**/LandingPage.tsx,**/app/page.tsx,**/App.tsx,**/locales/*.json"
+alwaysApply: false
+---
+
+# Promotional Landing — VTC Apps
+
+Visual styling: `ui.mdc` (runtime accent tokens, **Typography Standard**). i18n keys: `i18n.mdc`. Auth flow: `auth-bootstrap.mdc`.
+
+Landing pages may use `text-3xl+` for hero titles — see **Typography Standard** rule 12 exception.
+
+## Purpose
+
+When there is **no JWT** (`?token=` / `posif_token`) — Next.js **or** static Vite — show a **promotional landing**. Not an in-app OTP/login form and **not** `auth.posif.com`.
+
+Sell the **app** in the features panel, then offer **three ways to connect on VTC** via path cards linking to `https://vtc.com`. Users sign in on VTC and launch this app from a space catalog with `?token=`.
+
+## Page structure (required sections only)
+
+Do **not** add a hero icon/chip row under the title. Do **not** add a numbered “steps” or “how it works” flow.
+
+| # | Section | Content |
+|---|---------|---------|
+| 1 | **Hero** | App name + tagline only (signed-out landing only — never on the signed-in embedded home, `ui.mdc`) |
+| 2 | **Features panel** | Section title + 3–4 app-specific feature cards |
+| 3 | **Connect to VTC** | Section title + three path cards (join / space / network) |
+| 4 | **Trust footer** | One quiet line (optional but recommended) |
+| — | **Session banner** | When `?session=expired` |
+
+## Page shell
+
+Landing is **not** App Shell. Use a wider marketing layout:
+
+```tsx
+<div className="min-h-screen bg-surface-50 dark:bg-surface-800">
+  {/* Ambient glow — accent tokens, not hardcoded purple/blue */}
+  <div className="pointer-events-none fixed inset-0 overflow-hidden">
+    <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-app-accent-soft blur-3xl opacity-60" />
+    <div className="absolute -top-24 right-0 h-80 w-80 rounded-full bg-app-accent-soft blur-3xl opacity-40" />
+  </div>
+
+  <main className="relative max-w-[900px] mx-auto px-4 sm:px-6 py-10 sm:py-14 space-y-10">
+    {/* hero → features panel → connect panel → trust footer */}
+  </main>
+</div>
+```
+
+## 1. Hero
+
+- **App name** — `text-4xl sm:text-5xl font-bold text-app-accent dark:text-white` (accent on light; white on dark surfaces)
+- **Tagline** — `text-lg text-surface-600 dark:text-surface-300 leading-relaxed max-w-2xl` — what this app does
+- ❌ No icon strip, quick-hit chips, or secondary card row below the hero
+
+## 2. Features panel (“Everything you need…”)
+
+One bordered panel wrapping **3–4 app-specific** feature cards — not VTC marketing copy.
+
+```tsx
+<section className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 shadow-md p-6 sm:p-8">
+  <h2 className="text-lg font-semibold text-center text-gray-900 dark:text-white mb-6">
+    {t('landing.featuresTitle')}
+  </h2>
+  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    {features.map(f => (
+      <div key={f.key} className="rounded-xl border border-surface-200 dark:border-surface-700 p-5">
+        <div className="w-12 h-12 rounded-xl bg-app-accent-soft flex items-center justify-center text-app-accent-text mb-3">
+          {f.icon}
+        </div>
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white">{t(`landing.feature.${f.key}.title`)}</h3>
+        <p className="mt-1 text-sm text-surface-600 dark:text-surface-300">
+          {t(`landing.feature.${f.key}.description`)}
+        </p>
+      </div>
+    ))}
+  </div>
+</section>
+```
+
+- Default section title i18n: `landing.featuresTitle` — e.g. “Everything you need to build and grow”
+- Use **runtime accent** for icon backgrounds — not per-card rainbow colors (`ui.mdc`)
+
+## 3. Connect to VTC (path cards)
+
+Section title: `landing.connectTitle` — e.g. “Connect to VTC” or “Use this app your way”.
+
+Three path cards inside one panel (or panel title + grid below). Each card is a single `<a>` to VTC — **hardcoded `https://vtc.com` OK**.
+
+```tsx
+const VTC_PATH_URLS = {
+  join: 'https://vtc.com',
+  createSpace: 'https://vtc.com',
+  network: 'https://vtc.com',
+} as const
+
+const PATHS = ['join', 'createSpace', 'network'] as const
+```
+
+```tsx
+<section className="rounded-2xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 shadow-md p-6 sm:p-8">
+  <h2 className="text-lg font-semibold text-center text-gray-900 dark:text-white mb-6">
+    {t('landing.connectTitle')}
+  </h2>
+  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    {PATHS.map(key => (
+      <a
+        key={key}
+        href={VTC_PATH_URLS[key]}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="group flex flex-col rounded-2xl border border-surface-200 dark:border-surface-700
+          bg-white dark:bg-surface-800 p-5 shadow-sm hover:shadow-lg hover:border-app-accent-border transition-all"
+      >
+        <div className="w-11 h-11 rounded-full bg-app-accent-soft flex items-center justify-center text-app-accent-text mb-4">
+          {icons[key]}
+        </div>
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white">{t(`landing.path.${key}.title`)}</h3>
+        <p className="mt-1 text-sm text-surface-600 dark:text-surface-300 flex-1">
+          {t(`landing.path.${key}.description`)}
+        </p>
+        {/* Visual CTA — part of the link; use <span>, not nested <button> */}
+        <span className="mt-4 inline-flex items-center justify-center rounded-xl bg-app-accent
+          group-hover:bg-app-accent-hover text-white text-sm font-medium py-2.5 px-4 transition-all">
+          {t(`landing.cta.${key}`)} →
+        </span>
+      </a>
+    ))}
+  </div>
+</section>
+```
+
+Optional env override when an app needs different targets:
+
+| Variable | Default when omitted |
+|----------|-------------------|
+| `NEXT_PUBLIC_VTC_JOIN_URL` | `https://vtc.com` |
+| `NEXT_PUBLIC_VTC_CREATE_SPACE_URL` | `https://vtc.com` |
+| `NEXT_PUBLIC_VTC_CREATE_NETWORK_URL` | `https://vtc.com` |
+
+Do **not** disable CTAs or show `landing.notConfigured` solely because env vars are unset.
+
+## 4. Trust footer (recommended)
+
+```tsx
+<p className="text-center text-sm text-surface-500 dark:text-surface-400 flex items-center justify-center gap-2">
+  {t('landing.trust')}
+</p>
+```
+
+## Session expired
+
+Banner when `?session=expired` — above hero or top of `main`.
+
+## Home (`page.tsx` or Vite `App.tsx`)
+
+Bootstrap auth; if token → authenticated home; else `LandingPage`. Required for **both** Next.js and static Vite. Do not render App Shell or a “missing token” error when unauthenticated.
+
+## i18n keys (minimum)
+
+- `landing.title`, `landing.tagline`
+- `landing.featuresTitle` — e.g. “Everything you need to build and grow”
+- `landing.feature.{key}.title` + `.description` — **required**, app-specific (3–4 keys)
+- `landing.connectTitle` — e.g. “Connect to VTC”
+- `landing.path.{join|createSpace|network}.title` + `.description`
+- `landing.cta.{join|createSpace|network}`
+- `landing.sessionExpired`
+- `landing.trust` — recommended
+
+Optional: `landing.notConfigured` — only if you intentionally block CTAs when a custom env URL is required.
+
+## Do not
+
+- ❌ Login → `auth.posif.com` or `NEXT_PUBLIC_AUTH_URL`
+- ❌ Hero icon/chip row under the title (no “AI / Data / Launch / Flexible” strip)
+- ❌ Numbered steps section (“Build in 3 simple steps”)
+- ❌ Nested `<button>` inside path cards — use `<span>` styled as CTA inside the `<a>`
+- ❌ Separate link row below path cards — the card **is** the link
+- ❌ Single “Open Super App” card only — always three path cards
+- ❌ Hardcoded `app.vtc.com` or app subdomain in path URLs — use **`https://vtc.com`** (hardcoded OK)
+- ❌ Per-card rainbow colors (purple/blue/green) — use `--app-accent*` tokens only
+- ❌ API calls or embedded login on the landing page

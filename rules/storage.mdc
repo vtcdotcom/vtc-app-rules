@@ -1,0 +1,197 @@
+---
+description: File uploads via @vtc/sdk/storage — public vs private buckets
+globs: "**/api/**/upload/**,**/storage/**"
+alwaysApply: false
+---
+
+# Storage — VTC Apps
+
+**Static Vite apps:** do not use the SDK — call ZAPI `POST /storage/presign-upload` / `/presign-view` from the browser (`nextjs-to-vite.mdc`). This file covers **Next.js** server routes.
+
+Production: **`@vtc/sdk/storage`** on server API routes — never raw AWS SDK in prod. Legacy **`@posif/sdk/storage`** is deprecated (`vtc-packages.mdc`).
+
+Dev: local MinIO via `@aws-sdk/client-s3` is OK when `USE_LOCAL_STORAGE=true` in `env_development` — see **Local dev** below.
+
+## Non-negotiables
+
+- Upload/delete from **server** API routes only (`getDbWithAuth`)
+- Validate MIME type and max file size before upload
+- Never expose storage credentials client-side
+- Import from **`@vtc/sdk/storage`** in upload routes (smaller bundle; avoids pulling MongoDB into the route)
+
+Return `{ success: true, data: { url, key? } }` per `api-routes.mdc`.
+
+## Public vs private bucket
+
+The VTC platform provides **two S3 buckets** per app context. SDK default is **private** (`isPrivate: true`) — set **`isPrivate: false` explicitly** when content is world-readable.
+
+| Need | Bucket | Upload | Store in MongoDB | Serve |
+|------|--------|--------|------------------|-------|
+| **Public display** — portfolio images, product photos, avatars, assets on pages **without login** | **Public** | `isPrivate: false` | **Permanent public URL** — browser-reachable base + path (see **Public URL rewrite** below) | `<img src={url}>` — no token |
+| **Restricted** — invoices, drafts, member-only docs, chat attachments | **Private** | `isPrivate: true` | **Key only** (plus metadata if needed) | Presigned view URL **on demand** for authorized users |
+
+### Decision tree
+
+1. Will this URL appear in HTML or public API responses for **unauthenticated** visitors? → **Public bucket**
+2. Should only signed-in members (or admins) fetch the file? → **Private bucket**
+3. Unsure? Default **private** unless the brief explicitly requires public display.
+
+### Anti-patterns
+
+- ❌ Storing **presigned view URLs** in MongoDB for public content — they **expire**
+- ❌ Storing or rendering **`http://10.x.x.x:9000/...`** URLs from `generatePublicUrl()` — browsers cannot reach vRack MinIO
+- ❌ Uploading portfolio / catalog / landing images to the **private** bucket
+- ❌ Hand-building S3 keys with JWT `user_id` — use **`storage.generateKey(filename, isPrivate)`** (uses credential `ownerId` + JWT `group_id`)
+- ❌ Raw AWS SDK in **production** upload paths
+- ❌ Calling `@vtc/sdk/storage` from client components (server only)
+
+## Object key path
+
+SDK generates:
+
+```
+users/{ownerId}/{groupId}/{timestamp}-{uuid}-{sanitized-filename}
+```
+
+Always use `generateKey()` — do not substitute JWT `user_id` for `ownerId`.
+
+App-specific subfolders (e.g. `portfolio/images/`) are optional; if used, the **full key** must be consistent for upload, public URL, and delete.
+
+## Patterns
+
+### Public upload (portfolio, catalog, public avatar)
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { getStorage } from '@vtc/sdk/storage'
+import { getDbWithAuth } from '@/lib/db'
+
+export async function POST(request: NextRequest) {
+  const { user } = await getDbWithAuth(request)
+  // …authorize (e.g. isAdmin)…
+
+  const formData = await request.formData()
+  const file = formData.get('file') as File
+  const buffer = Buffer.from(await file.arrayBuffer()) // ideally after server resize/compress
+
+  const storage = await getStorage(request)
+  const filename = `${Date.now()}.webp`
+  const key = await storage.generateKey(filename, false) // public bucket
+
+  const uploadUrl = await storage.getPresignedUrl(key, 'upload', false)
+  await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/webp' },
+    body: buffer,
+  })
+
+  const rawUrl = await storage.getPublicUrl(key)
+  const url = resolvePublicStorageUrl(rawUrl) // required on platform — see below
+  return NextResponse.json({ success: true, data: { url, key } })
+}
+```
+
+`resolvePublicStorageUrl` is a small app helper (see **Public URL rewrite**).
+
+### Private upload (member document)
+
+```typescript
+import { getStorage } from '@vtc/sdk/storage'
+
+const storage = await getStorage(request)
+const key = await storage.generateKey(file.name, true) // private — SDK default
+
+const uploadUrl = await storage.getPresignedUrl(key, 'upload', true)
+// …PUT buffer to uploadUrl…
+
+// Store key in MongoDB — not a presigned view URL
+return NextResponse.json({ success: true, data: { key } })
+```
+
+When serving to an authorized user:
+
+```typescript
+const viewUrl = await storage.getPresignedUrl(storedKey, 'view', true)
+```
+
+High-level helpers (`generateUploadUrl`, `generatePublicUrl`, `generateFileUrls`) from `@vtc/sdk/storage` are equivalent — prefer them when you do not need custom processing before PUT.
+
+## Public URL rewrite (required for `<img>` and public APIs)
+
+ZAPI `storage_public` credentials (and `@vtc/sdk/storage`) use an **internal** MinIO endpoint for upload — e.g. `an internal MinIO URL`. `generatePublicUrl(key)` builds URLs from that endpoint. **Browsers in the shell cannot load internal vRack URLs.**
+
+Serve and store **browser-reachable** URLs instead:
+
+| Environment | Public base (no trailing slash) | Example object URL |
+|-------------|----------------------------------|--------------------|
+| **VTC production** | `https://s3.vtc.com` | `https://s3.vtc.com/posif-apps-public-1/users/{ownerId}/{groupId}/…` |
+| **Local MinIO** | `http://{DEV_LAN_HOST}:9000` | Same path after host — rewrite `localhost` / `127.0.0.1` for LAN testing |
+
+Canonical CDN hostname: **`s3.vtc.com`** — https://vtc.com/developers.
+
+### Env (platform-injected at build — do not commit — `env-development.mdc`)
+
+| Variable | Where | Purpose |
+|----------|--------|---------|
+| `STORAGE_PUBLIC_BASE_URL` | Server (upload routes, API responses) | Rewrite internal MinIO URLs after upload/save |
+| `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` | Client (`<img>`, client components) | Same base for display when URL comes from API unchanged |
+
+Both should match (e.g. `https://s3.vtc.com`). **Do not** put internal `10.x` or upload endpoints in these vars.
+
+### App helper pattern
+
+Add `src/lib/storagePublicUrl.ts` (or equivalent):
+
+```typescript
+export function getStoragePublicBaseUrl(): string {
+  return (
+    process.env.STORAGE_PUBLIC_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL?.trim() ||
+    ''
+  ).replace(/\/$/, '')
+}
+
+/** Rewrite internal MinIO host → public CDN base; keep path (/bucket/key…). */
+export function resolvePublicStorageUrl(url: string): string {
+  const publicBase = getStoragePublicBaseUrl()
+  if (!publicBase || !url.trim()) return url
+  try {
+    const parsed = new URL(url.trim())
+    const internal =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      /^10\./.test(parsed.hostname) ||
+      parsed.port === '9000'
+    if (!internal) return url
+    return `${publicBase}${parsed.pathname}${parsed.search}`
+  } catch {
+    return url
+  }
+}
+```
+
+### Where to apply
+
+1. **After upload** — `resolvePublicStorageUrl(await generatePublicUrl(key, request))` before returning to client / MongoDB
+2. **On save** — normalize `hero_image_url` and similar fields in create/update routes
+3. **On read** — public article APIs and list endpoints (covers legacy rows still storing internal URLs)
+4. **On display** — client components that render stored URLs in `<img src>` (belt-and-braces)
+
+Private bucket content uses **presigned view URLs** on demand — no public base rewrite.
+
+## Local dev (MinIO)
+
+When `USE_LOCAL_STORAGE=true` or localhost dev with MinIO:
+
+- Raw `@aws-sdk/client-s3` against MinIO is acceptable
+- Match **public vs private intent**: public portfolio content needs anonymous `GetObject` (bucket policy on local MinIO)
+- Dev key shapes may differ from prod; **production must use SDK** paths above
+- Set `STORAGE_PUBLIC_BASE_URL` / `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` to `http://{DEV_LAN_HOST}:9000` when MinIO listens on `localhost` but the browser uses LAN IP — `env-development.mdc`
+
+Env: `MINIO_*`, `USE_LOCAL_STORAGE`, `STORAGE_PUBLIC_*` in `env_development` — `env-development.mdc`.
+
+## Processing before upload
+
+**Video:** all user video goes through **ZAPI** (`POST /api/v1/media/videos` → raw PUT → process → poll) — see **`video-uploads.mdc`**. Do not upload finished `.mp4` files directly to the public bucket.
+
+When image uploads can be large, resize/compress on the server (e.g. Sharp → WebP). Validate **original** size before processing; PUT **optimized** bytes to S3.

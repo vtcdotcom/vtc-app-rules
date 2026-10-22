@@ -1,0 +1,255 @@
+---
+description: Personal storage and personal-capable apps — personalDb(), group=0, dual-scope lists, owner-only isolation, share index
+alwaysApply: false
+---
+
+# Personal Storage — Apps and `personalDb()`
+
+Publish scopes: `app-types.mdc`. DB wiring: `architecture.mdc`. Document fields: `data-model.mdc`. ACL (people-only): `access-control.mdc`. SDK: `vtc-packages.mdc` (`@vtc/sdk` ≥ **1.4.0**).
+
+**Personal** is a **storage scope**, not a separate app runtime. The same child app URL can open in personal context (`group=0`) or space context (`group` non-zero). What changes is **where records live** and **who can read them**.
+
+## When to use it
+
+| Capability set (`group_apps.data_storage`) | Use when |
+|--------------------------------------------|----------|
+| `personal` | User-owned records only (notes, drafts, private library). No space silo. |
+| `space,personal` | Space records **and** a personal library that follows the user across spaces (tasks, albums). |
+| `space` | Per-space silo only. |
+| `app` (**Publisher**) | One publisher space holds the whole dataset (Dedicated). Same records in every consuming space. |
+
+**Space** and **Publisher** (token `app`) are mutually exclusive — both are space-backed tenant DBs (per-space silo vs one publisher space). **Personal** combines with **Space** only. Do **not** create `app,personal`: Publisher already uses a publisher space to collect all app data. Listing on Personal apps is **Available in**, not a Personal storage checkbox.
+
+At least one scope is required.
+
+Do **not** store personal records in a space silo (`getDb()` / `db_{group}_2`) or in `db_{user_id}_1`.
+
+## Creating a personal or dual-scope app
+
+Scaffolding is the same Next.js / Vite path (`scaffold-checklist.mdc`). What changes is the **capability set**, **list/create branching**, and the shell **Publish → Data Storage** checkboxes. Catalog placement is shell/ZAPI — do not implement a second catalog in the child app.
+
+### 1. Pick the set before files
+
+| Brief | Publish Data Storage | Implement |
+|-------|----------------------|-----------|
+| Personal-only tool (notes, private drafts) | **Personal** → `personal` | `personalDb()` only. No space silo. |
+| Space tool **plus** a personal library that follows the user | **Space + Personal** → `space,personal` | Dual-scope (below). Album and tasks are this set. |
+| One shared dataset for every space | **Publisher** → `app` | `connectDB()` only. Publisher space is the store. Not a personal hybrid. |
+
+Space and Publisher stay exclusive. Personal combines with Space only — never Publisher.
+
+**Existing space-only app** (album started this way): keep Space, add Personal on republish, then add dual-scope code. Do not move existing space rows into `personalDb()`.
+
+### 2. Scaffold and pin the SDK
+
+1. `~/cursor_rules/scripts/new.sh` (or Builder / generate-app) — same as any child app.
+2. Pin **`@vtc/sdk` ≥ 1.4.0**.
+3. Add `getPersonalStore(request)` next to `getDbWithAuth()` — do not replace space wiring.
+4. Confirm the set with the user in the plan (`product-start.mdc` step 2) before writing collections.
+
+### 3. Dual-scope product (`space,personal`) — album / tasks
+
+Same collection names in both stores. Stamp `kind: 'personal' | 'space'` (personal rows may also use `group_id: '0'`).
+
+| Surface | Personal launch (`group=0`) | Space launch |
+|---------|-----------------------------|--------------|
+| Home list | Personal store only | Personal rows first, then this space’s rows |
+| New record | Always personal — no scope picker | Scope picker: this space vs personal (`?kind=personal` is fine) |
+| Edit / delete / upload | Owner, via `personalDb()` | Space ACL on space rows; owner-only on personal rows |
+
+Create kind:
+
+```typescript
+function resolveCreateKind(user: { group_id: string }, requested?: unknown): 'personal' | 'space' {
+  if (!user.group_id || user.group_id === '0') return 'personal'
+  return requested === 'personal' ? 'personal' : 'space'
+}
+```
+
+Form/i18n: a **scope** control (space vs personal) only when creating from a space and the app is dual-scope. Personal launch skips it.
+
+Do not write personal rows into the space silo so they “show up in the space.” List both stores.
+
+**Convert a live space app:** (1) add `personalDb` helpers and `kind`, (2) merge personal into list, (3) add the create picker, (4) republish with **Space + Personal** checked. Space data stays in `db_{group}_2`.
+
+### 4. Personal-only product (`personal`)
+
+No `getDb()` for tenant data. List/create/update always use `personalDb()`. Publish **Personal** only (do not also check Space unless the brief needs space records).
+
+### 5. Publish in the shell (not app code)
+
+App detail → **Publish** → **Data Storage** (checkboxes: Space, Publisher, Personal). At least one required.
+
+| Check (UI) | Stored CSV | Runtime |
+|------------|------------|---------|
+| Space | `space` | Space silo |
+| Publisher | `app` | Publisher-space DB |
+| Personal | `personal` | `personalDb()` |
+| Space + Personal | `space,personal` | Both stores |
+
+**Available in** (`group_apps.available_in`) is a picker only when storage can serve more than one home (Publisher, or Space + Personal). Space-only storage is listed in Space catalogs; Personal-only storage is listed in Personal apps. A Publisher app can list personally without Personal storage. Personal-only listing stays off Network Recommended. Hybrids (`space,personal`) stay on both.
+
+Do not check Publisher and Personal storage together. Publisher already has a publisher space as the single store.
+
+ZAPI field: `group_apps.data_storage`. Legacy `hosting_billable` / `deployment_model` are derived (Space → platform/shared; Publisher-only → publisher/dedicated). Do not treat those as the storage set or the catalog list.
+
+If **Available in Space** is unchecked, the Publish **Access** picker is hidden and visibility is forced to **Platform** (`public`) so the app can open from the personal dashboard. Space-only community modules (`events`, `forum`, `newsfeed`, `groupfeed`, `membersdir`) must stay Available in Space — never Personal listing.
+
+Legacy `personal_app=yes` also lists an app on the personal dashboard when `available_in` is unset. New work: set **`available_in`** to include `personal`. `personal_app` is kept in sync from that field. Do not invent a second listing flag in child-app code.
+
+After publish, users open the **same** `{code}.apps.vtc.com` URL: shell injects `group=0` from the personal dashboard, or a non-zero `group` from a space.
+
+### 6. Agent checklist (create / convert)
+
+- [ ] Capability set agreed (`personal` vs `space,personal` vs `space` vs Publisher/`app`)
+- [ ] `@vtc/sdk` ≥ 1.4.0 and `getPersonalStore`
+- [ ] Dual-scope: `kind`, list merge, create picker, owner-only personal writes
+- [ ] Personal-only: no space silo queries
+- [ ] Shell Publish checkboxes match the set (republish if converting)
+- [ ] Sharing (if any) uses a publisher share index — not `personalDb()` of someone else
+
+## Personal context vs space launch
+
+The shell iframe always injects `?token=&user=&group=`.
+
+| Launch | JWT / URL `group` | What the app should show |
+|--------|-------------------|--------------------------|
+| Personal (core shell, `group=0`) | `"0"` | Only **this user's** personal records. Create/upload goes to `personalDb()`. |
+| Space (space catalog) | non-zero | Space-owned records for that `group_id`. If the app also has Personal, **also** list the user's personal records (typically first). |
+
+`group=0` is **not** a space id. Never call SDK `getDb()` for tenanted space data when `group_id === '0'`. Never treat `db_0_2` as personal storage.
+
+Billing: personal-context usage meters to the **user's** wallet (`platform-metering.mdc`). Space-context space data meters to the space owner (or network owner on a private network).
+
+## How the personal DB works
+
+There is **no personal Mongo URI** and no per-user connection string.
+
+- Data lives in shared bucket DBs: `personal_{cluster}_{bucket}` (bucket = `user_id % 256`).
+- All access is `personalDb()` → ZAPI `/api/v1/db/personal/{find,count,insert,update,delete,collections,info}`.
+- The proxy stamps `user_id` on writes and **enforces it on every read**. A filter cannot see another user's documents.
+- Works **server-side and in the browser** (fetch + JWT). Token from `?token=` or an explicit JWT string.
+
+```typescript
+import { personalDb } from '@vtc/sdk'
+
+export async function GET(req: NextRequest) {
+  const notes = personalDb(req).collection('myapp_notes')
+  await notes.insertOne({ title: 'hello', status: 'active' })
+  const items = await notes.find(
+    { status: { $ne: 'deleted' } },
+    { sort: [['_id', -1]], limit: 50 }
+  )
+  return NextResponse.json({ success: true, data: items })
+}
+```
+
+### Collection API
+
+`find` / `findOne` / `countDocuments` / `insertOne` / `insertMany` / `updateOne` / `updateMany` / `deleteOne` / `deleteMany`. Also `listCollections()` and `info()` on the client.
+
+| Rule | Detail |
+|------|--------|
+| Never set or filter `user_id` | Updates that touch `user_id` are rejected. The proxy owns it. |
+| No `group_id` filter | Personal rows are not space-tenanted. Optional `group_id: '0'` / `kind: 'personal'` is fine for dual-scope apps that share a type. |
+| Soft delete | Still exclude `status: 'deleted'`. |
+| Operator updates only | `$set`, `$push`, … — not replacement documents. |
+| Find page cap | Max **200** docs (default **50**). Paginate with `skip` / `limit`. |
+| No `createIndex` | HTTP client, not a Mongo `Db`. Do not call driver-only helpers on it. |
+
+`getPersonalDb()` (direct `Db` for `db_{user_id}_1`) is **deprecated for app data** — legacy AI-stack silo only. Never build per-user Mongo URIs by hand.
+
+Pin **`@vtc/sdk` ≥ 1.4.0** when the app declares Personal.
+
+## `db.ts` wiring
+
+Keep space/app access on `getDbWithAuth()` / `connectDB()`. Add a **separate** personal helper — do not overload `getDbWithAuth()` to return `personalDb()`.
+
+```typescript
+import { personalDb } from '@vtc/sdk'
+import { getTokenFromRequest } from './jwt'
+import { getAuthenticatedUser } from './auth'
+
+export function getPersonalStore(request: NextRequest) {
+  const user = getAuthenticatedUser(request)
+  const token = getTokenFromRequest(request)
+  if (!user || !token) throw new Error('Authentication required')
+  return { store: personalDb(request, token), user, token }
+}
+```
+
+Dual-scope resolve pattern:
+
+1. If `group_id !== '0'`, try the space silo (`getDbWithAuth`) for space-owned ids.
+2. Else (or if not found), read `personalDb()` for the caller's personal records.
+3. Writes to personal records always go through `personalDb()` of the **owner** (the caller, when they own the row).
+
+Localhost: `personalDb()` still talks to ZAPI `/api/v1/db/personal/*` (not `MONGODB_DEV_URI`). Do not invent a local personal URI.
+
+## Dual-scope runtime (`space,personal`)
+
+Create/convert steps and the scope picker are under **Creating a personal or dual-scope app**. Runtime rules:
+
+- Same collection names; `kind: 'personal' | 'space'`.
+- Resolve: space silo first when `group_id !== '0'`, else / also `personalDb()` for the caller’s rows.
+- Writes to personal rows always go through the owner’s `personalDb()`.
+- Billing: personal create/upload → user wallet (`group_id` `'0'`); space rows → space owner.
+
+## Isolation — others cannot read `personalDb()`
+
+The personal proxy is **owner-only**. You cannot grant space members, followers, or another username access to the owner's bucket.
+
+If the product must **share** personal records (view a personal album, a shared task list):
+
+1. Keep the source of truth in the owner's `personalDb()`.
+2. Upsert a **publisher share index** (Dedicated / `connectDB()` / a named share DB — not a space silo, not the recipient's personal store).
+3. Snapshot whatever the recipient needs to **view** (metadata + media keys). Recipients read the share index.
+4. On owner write/delete, sync or soft-delete the share snapshot.
+5. Incoming shares are **read-only** unless the product explicitly designs writes into the share index (never into someone else's `personalDb()`).
+
+ACL on personal shares is **people-only** — usernames / `allowed_user_ids`. No space roles or member lists (`access-control.mdc`). Typical visibilities: `private` (owner only, no share row) · `restricted` (named people) · `followers` / `connections` (ZAPI social checks at read time) · `public` (optional `?username=` guest reads).
+
+Do **not** implement “share” by copying the owner's personal JWT or by querying `personal_{cluster}_*` with another user's id.
+
+## Query baselines
+
+**Personal store:**
+
+```typescript
+const filter = { status: { $ne: 'deleted' } }
+// optional: { kind: 'personal' }
+```
+
+**Space store (unchanged):**
+
+```typescript
+const filter = { group_id: user.group_id, status: { $ne: 'deleted' } }
+```
+
+List APIs that merge stores: cap personal pages (personal find max 200), paginate **space** with `skip`/`limit`, and attach incoming share rows on `skip === 0` only.
+
+## Static Vite / Expo
+
+Browser-only apps may call `personalDb()` with the JWT (same ZAPI routes). Do not add `MONGODB_URI` or `getDb()` for personal data. Native Store apps: follow `@vtc/native` — do not import Node `getDb()`.
+
+## Anti-patterns
+
+- ❌ `getPersonalDb()` / `db_{user_id}_1` for new app data
+- ❌ Hand-built per-user Mongo URIs
+- ❌ `getDb()` when `group_id === '0'` expecting a personal silo
+- ❌ Setting or filtering `user_id` in personal writes
+- ❌ Replacement updates (must be operators)
+- ❌ `createIndex` / aggregation / transactions on `personalDb()`
+- ❌ Putting personal records in `db_{group}_2` so “the space can see them”
+- ❌ Letting recipients read the owner's `personalDb()`
+- ❌ Role / member-list ACL pickers on personal resources
+
+## Checklist
+
+1. Publish **Data Storage** includes `personal` (alone or with Space — never with Publisher / `app`).
+2. `@vtc/sdk` ≥ 1.4.0; use `personalDb(request)` / `personalDb(request, token)`.
+3. Personal CRUD never goes through `getDb()` / `connectDB()` space paths.
+4. `group=0` → personal-only UX; space launch may merge personal + space.
+5. Soft-delete filters; no `user_id` in app filters; find pages ≤ 200.
+6. Sharing (if any) → publisher share index + snapshot, people-only ACL.
+7. Personal-context billing → user wallet.

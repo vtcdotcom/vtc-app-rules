@@ -1,0 +1,188 @@
+---
+description: Create static Vite apps instead of Next.js — ZAPI app services (storage presign, AI proxy, email, SMS, PDF, public reads, atomic ops, schedules) and conversion checklist
+alwaysApply: false
+---
+
+# Next.js → Static Vite — App Services & Conversion
+
+**Load the catalog first:** `zapi-developer-catalog.mdc` — `GET /api/v1/developer/catalog` lists all app-facing platform services and endpoints.
+
+Most child apps do **not** need a Node server. ZAPI now provides app-facing services that cover the common reasons apps used Next.js API routes. **Default to a static Vite SPA** for new apps; convert existing Next.js apps when they qualify.
+
+New app: `runtime-types.mdc` → `scaffold-checklist-static.mdc` → `zapi-collections.mdc`. This file covers the ZAPI services and the conversion path.
+
+## When Next.js is still required
+
+Keep (or choose) Next.js **only** when the app needs one of:
+
+1. **Server-only secrets for third-party APIs** ZAPI does not proxy (e.g. Stripe secret key, external partner APIs)
+2. **Heavy server compute** — Sharp image pipelines, docling PDF/Office parsing, ffmpeg
+3. **SSR / SEO** — public marketing pages that must render server-side
+4. **Custom Mongo aggregation pipelines** beyond the collections API filter/sort
+5. **Multipart uploads > 200 MB** or server-side virus scanning
+
+Everything else — CRUD, uploads, AI chat/RAG, transactional email/SMS, HTML→PDF receipts, public read-only views, counters/votes, reminders — works from the browser via ZAPI.
+
+## ZAPI app services (all live at `https://api.vtc.com/api/v1`)
+
+All authenticated calls: `Authorization: Bearer {jwt}` (JWT from `?token=` — `auth-bootstrap.mdc`). Metered services bill the **space owner** at wholesale + markup (`platform-metering.mdc`); responses include `credits_charged`.
+
+### 1. File uploads — presigned URLs (replaces `@vtc/sdk/storage` server routes)
+
+```http
+POST /storage/presign-upload
+{ "filename": "photo.jpg", "content_type": "image/jpeg", "size_bytes": 123456, "is_private": false }
+→ data: { key, upload_url, expires_in, public_url? }   // public_url only when is_private=false
+
+POST /storage/presign-view
+{ "key": "users/1/2/…-photo.jpg", "is_private": true }
+→ data: { view_url }
+```
+
+Browser flow: presign → `PUT upload_url` with the file body and the **same** `Content-Type` → store `key` (private) or permanent `public_url` (public) in the document.
+
+- Max **200 MB**; allowlist: `image/*`, `video/*`, `audio/*`, `text/*`, `font/*`, plus common docs (PDF, Office, JSON, CSV, zip)
+- Key shape `users/{ownerId}/{groupId}/{ts}-{uuid}-{filename}` — generated server-side, do not build keys in the app
+- Public objects serve permanently from `https://s3.vtc.com/...` — never store presigned view URLs (they expire); same public/private decision tree as `storage.mdc`
+- Video that needs transcoding still goes through `video-uploads.mdc` (ZAPI media routes)
+
+### 2. AI proxy (replaces server-side DeepInfra keys)
+
+```http
+POST /apps/ai/chat
+{ "messages": [{ "role": "user", "content": "…" }], "max_tokens": 1024, "temperature": 0.4 }
+→ data: { content, model, provider, finish_reason, tokens_in, tokens_out, credits_charged }
+
+POST /apps/ai/embeddings
+{ "input": ["text a", "text b"] }            → data: { embeddings, tokens, credits_charged }
+
+POST /apps/ai/rerank
+{ "query": "…", "documents": ["…"], "top_n": 5 } → data: { results: [{index, document, score}], … }
+
+POST /apps/ai/transcribe
+{ "key": "users/…/clip.m4a", "is_private": true } → data: { text, duration_seconds, credits_charged }
+
+POST /apps/ai/vector-upsert
+{ "id": "rec_…", "text": "…", "app_code": "memory" } → data: { id, credits_charged }
+
+POST /apps/ai/vector-search
+{ "query": "…", "app_code": "memory", "limit": 8 } → data: { results: [{id, score, text, metadata}], … }
+
+POST /apps/ai/vector-delete
+{ "id": "rec_…", "app_code": "memory" }
+```
+
+- `provider` is always `deepinfra` (omit it; legacy `cerebras` / `groq` values are mapped to DeepInfra). Default model `Qwen/Qwen3-32B`; pass `model: 'openai/gpt-oss-120b-Turbo'` for fast chat / JSON / tool calls; `stream: true` gives SSE
+- Chat ≤ 64 messages; embeddings ≤ 256 texts; rerank ≤ 128 documents; completion tokens capped by platform
+- No `*_API_KEY` env vars in the app at all — nothing to inject at build
+- Client-side RAG: embed on write, store vectors in the document `data`, cosine-rank in the browser, rerank via `/apps/ai/rerank`
+- Server RAG: `vector-upsert` / `vector-search` wrap vaultapi, namespaced by JWT user + `app_code` (not Guide memories)
+- Speech: `POST /apps/ai/transcribe` from a storage key (max 10 MB). Screen-recording TTS still uses those group routes (`ai-inference.mdc`)
+- Closed decisions (a label, a yes/no, a score) are Jev packs in ZAPI — `jev-decisions.mdc`. Do not ask `/apps/ai/chat` to return JSON labels.
+
+### 3. Transactional email (replaces server SMTP/SES routes)
+
+```http
+POST /notifications/email
+{ "to_email": "a@b.com", "subject": "…", "message": "<p>HTML body</p>", "sender_name": "My App" }
+→ data: { message_id, credits_charged }
+```
+
+Rate-limited per space per day (default 200); sent from the platform's address. For booking confirmations, receipts, invite mails — not bulk campaigns. **Not** the shell chrome bell — `shell-notifications.mdc`.
+
+### 4. Transactional SMS (replaces server Twilio routes)
+
+```http
+POST /notifications/sms
+{ "to_mobile": "+14155552671", "message": "Your booking is confirmed for tomorrow at 10am." }
+→ data: { message_id, credits_charged }
+```
+
+- E.164 mobile required (`+` country code); max 1600 chars
+- Rate-limited per space per day (default 50); delivered via platform Twilio (`site_settings`)
+- For reminders, confirmations, alerts — not bulk campaigns
+- **Not** the shell chrome bell — `shell-notifications.mdc`
+
+### 5. PDF generation (replaces server puppeteer/pdfkit routes)
+
+```http
+POST /apps/pdf/generate
+{ "html": "<h1>Invoice</h1><p>Total: $50</p>", "title": "Invoice #123" }
+→ data: { document_id, credits_charged, pdf_base64, filename, size_bytes, content_type }
+```
+
+- HTML fragment or full document; server wraps fragments in a minimal template
+- Rate-limited per space per day (default 100); max 500 KB HTML, 5 MB output
+- Decode `pdf_base64` client-side for download/print — for simple receipts, tickets, invoices
+- Complex PDF/Office parsing (docling) still needs Next.js or a dedicated service
+
+### 6. Public collection reads (replaces SSR/public API routes)
+
+Opt in per collection (admin JWT), then anyone can read without a token:
+
+```http
+POST /collections/{name}/public-read        { "enabled": true }     // Bearer JWT, write permission
+
+GET /public/collections/{name}/documents?group={group_id}&page=1&page_size=20   // no auth
+GET /public/collections/{name}/documents/{_id}?group={group_id}                 // no auth
+```
+
+- 404 until explicitly enabled; soft-deleted documents excluded automatically
+- Use for public menus, price lists, event listings, published articles. **Never enable** on collections with PII or member data
+
+### 7. Atomic document ops (replaces server routes for votes/counters/RSVPs)
+
+```http
+PATCH /collections/{name}/documents/{_id}/ops
+{
+  "only_if_absent": { "field": "voters", "value": "user-123" },   // optional guard
+  "ops": { "inc": { "votes": 1 }, "add_to_set": { "voters": "user-123" } }
+}
+→ { applied: true|false, reason, document }
+```
+
+- Allowed ops: `inc`, `push`, `add_to_set`, `set` — field paths are inside `data`
+- `add_to_set` dedupes; `only_if_absent` returns `applied: false, reason: "condition_not_met"` instead of double-applying
+- Use for concurrent writes from multiple clients (votes, RSVP lists, counters) instead of read-modify-`PUT` races
+
+### 8. Scheduled webhooks (replaces cron/node-schedule)
+
+```http
+POST /schedules
+{ "name": "close-auction", "webhook_url": "https://…", "run_at": "2026-08-01T12:00:00Z", "payload": { "auction_id": "…" } }
+→ data: { schedule_id, secret, next_run_at, … }        // secret returned once, at create
+
+GET /schedules · GET /schedules/{id} · DELETE /schedules/{id}
+```
+
+- One-shot (`run_at`) or recurring (`interval_minutes`); `webhook_url` must be public HTTPS (internal IPs rejected)
+- Fires `POST` with headers `X-VTC-Schedule-Id`, `X-VTC-Timestamp`, `X-VTC-Signature` (HMAC-SHA256 of `{timestamp}.{body}` with the schedule `secret`)
+- The receiver must be a server (an external endpoint or a ZAPI-hosted flow) — a static SPA cannot receive webhooks itself; typical use is scheduling writes another system will perform
+
+## AI Guide integration (manifests work for static apps)
+
+Ship `public/.well-known/ai-manifest.json` exactly like Next.js apps (`ai-manifest.mdc`) — Vite copies it into `dist/`. Tools declare a **`zapi` target** instead of `http`, and the Guide executes them against the app's collections with the user's JWT (create/list/get/update/apply_ops). Inter-app flows need no HTTP hop: static apps in the same space share the per-space DB, so the Guide (and other apps) reach your data through the same collections API.
+
+## Conversion checklist (existing Next.js app)
+
+1. **Audit `src/app/api/`** — map every route to a ZAPI service above; anything unmapped → check "Next.js still required" list; if hit, stop and keep Next.js
+2. **Scaffold Vite** alongside per `scaffold-checklist-static.mdc` (Vite + React + TS, `clientAuth.ts`, `vtcApi.ts`/`vtcDocuments.ts`, i18n, Tailwind v4)
+3. **Move pages → SPA screens** — `src/app/**/page.tsx` becomes client components; drop `use client`, `next/navigation` → local router state or a tiny client router
+4. **Replace data access** — `getDb()`/`connectDB` and API-route fetches become `vtcDocuments.ts` calls against `/collections/*` (`zapi-collections.mdc`); shared apps keep the `group_id` + `status != 'deleted'` filter client-side
+5. **Replace uploads** — upload API routes → `/storage/presign-upload` + browser `PUT` (service 1)
+6. **Replace AI routes** — `src/lib/groq.ts`/`cerebras.ts`/`deepinfra.ts` (Groq/Cerebras are retired) → `/apps/ai/*` (service 2); delete provider env vars
+7. **Replace email / SMS / PDF / cron / vote routes** — services 3–6, 8
+7b. **Convert the AI manifest** — rewrite each tool's `http` block as a `zapi` target (`ai-manifest.mdc`); tools that mapped to app API routes now map to the backing collection actions
+8. **Env** — keep only `VITE_*` app-owned keys; remove `MONGODB_URI`, all `*_API_KEY`, `output: 'standalone'`, `next.config.ts`
+9. **Verify** — `npm run build` produces `dist/`; grep proof: no `next`, `mongodb`, `getDb`, `API_KEY` in the app source
+10. **Push** — platform infers `runtime_type: static` from `package.json` on first push (`runtime-types.mdc`); static deploy lane uploads `dist/`
+
+## Do not
+
+- Do not call `/apps/ai/*` or presign endpoints without checking `credits_charged` handling — surface 402 (insufficient credits) to the user
+- Do not enable `public-read` as a substitute for auth on member data
+- Live updates: `realtime.mdc` → *Static Vite apps* (`wss://ws.vtc.com`, login token on connect, broadcast only "record changed", re-read through ZAPI; poll only as the fallback while disconnected)
+- Do not keep a Next.js server "just in case" — if every route maps to a ZAPI service, convert fully
+
+
+Core Records (shared customers, items, invoices across apps): `core-records.mdc` — `@vtc/suite-core` works in both Vite and Next.js.

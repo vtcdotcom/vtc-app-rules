@@ -1,0 +1,1080 @@
+---
+description: UI rules — App Shell, typography, Tailwind v4, VTC theme, page layouts, buttons, inputs, cards
+globs: **/*.tsx
+alwaysApply: false
+---
+
+# UI & Styling — VTC Apps
+
+## Tailwind CSS v4 — required on new apps
+
+**New apps:** Tailwind **v4 only** — install `tailwindcss` + `@tailwindcss/postcss` + `postcss`. Do not scaffold v3 (`@tailwind` directives, `tailwindcss` PostCSS plugin, or v3-style `content` arrays).
+
+**Legacy apps:** If the project already uses Tailwind v3, do not migrate to v4 unless the user asks — match the existing major version.
+
+```javascript
+// postcss.config.mjs or postcss.config.js — ONLY @tailwindcss/postcss
+export default { plugins: { '@tailwindcss/postcss': {} } }
+```
+
+- ❌ Do NOT use `tailwindcss` as a PostCSS plugin
+- ❌ Do NOT add `autoprefixer` (v4 handles prefixes)
+- ❌ Do NOT use `@tailwind base|components|utilities`
+- ❌ Do NOT use `prefers-color-scheme` / media-query dark mode
+- `tailwind.config.ts` is **optional** in v4 — prefer CSS `@theme` below
+
+```css
+/* src/app/globals.css */
+@import "tailwindcss" source(none);
+@source "../**/*.{js,ts,jsx,tsx}";
+
+@custom-variant dark (&:where(.dark, .dark *));
+```
+
+**Why `source(none)`:** Limit class scanning to `src/` only. Do not use bare `@import "tailwindcss"` — Tailwind v4 auto-scans the project root and may follow `.cursor/rules` symlinks, breaking Turbopack or slowing dev.
+
+**Legacy v3 apps:** Keep `@tailwind base|components|utilities` — do not add `source(none)` on v3.
+
+```css
+/* @theme block — after @import / @source */
+@theme {
+  --color-surface-50: #f8fafc;
+  --color-surface-200: #e2e8f0;
+  --color-surface-300: #cbd5e1;
+  --color-surface-500: #64748b;
+  --color-surface-600: #475569;
+  --color-surface-700: #334155;
+  --color-surface-800: #1e293b;
+  /* Runtime accent — map to CSS vars set by ThemeProvider */
+  --color-app-accent: var(--app-accent);
+  --color-app-accent-hover: var(--app-accent-hover);
+  --color-app-accent-soft: var(--app-accent-soft);
+  --color-app-accent-border: var(--app-accent-border);
+  --color-app-accent-text: var(--app-accent-text);
+}
+```
+
+```css
+/* :root fallbacks only — ThemeProvider overwrites at runtime */
+:root {
+  --app-accent: #004a80;           /* VTC Blue — platform fallback */
+  --app-accent-hover: #003a6e;
+  --app-accent-soft: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  --app-accent-border: color-mix(in srgb, var(--app-accent) 35%, transparent);
+  --app-accent-text: var(--app-accent);
+}
+
+/* Dark mode — accent hue is often too dark on surface-800; force readable accent text */
+.dark {
+  --app-accent-text: #ffffff;
+}
+
+@layer utilities {
+  .dark .text-app-accent {
+    color: #ffffff;
+  }
+  .dark .text-app-accent-text {
+    color: #ffffff;
+  }
+}
+```
+
+Use utilities `bg-surface-800`, `border-surface-200`, `bg-app-accent`, `text-app-accent`, `ring-app-accent`, etc. `ThemeProvider` sets `.dark` on `<html>` from URL `mode` (`light` | `dark`) and resolves accent tokens — see **Runtime Accent Color Standard** below.
+
+**Dev watchers (EMFILE):** mandatory `next.config.ts` + Tailwind scoping — see **`dev-watch.mdc`** (do not duplicate here; always apply both).
+
+## Next.js dev — ignore `.cursor` and parent dirs (v4 apps)
+
+Use the full **`dev-watch.mdc`** `next.config.ts` block (`followSymlinks: false`, ignore parent suite folder, path guard). Minimal snippet is **not** sufficient for apps inside `eduslide/` or `crm_suite/`.
+
+## Shared Cursor rules (local only)
+
+After clone, link central rules — **never commit `.cursor/`**:
+
+```bash
+~/apps/cursor/scripts/add.sh my-app
+# → .cursor/rules -> ~/apps/cursor/rules
+```
+
+Do not symlink the whole `~/apps/cursor` repo as `.cursor`.
+
+## Dual theme — mandatory (new apps)
+
+Every screen and shared component must work in **light and dark**:
+
+- Pair backgrounds, borders, and text: `bg-white dark:bg-surface-800`, `text-gray-900 dark:text-white`, etc.
+- Landing page, forms, errors, modals, nav — not only dashboard
+- No hardcoded colors that only look correct in one mode
+- Verify with `?mode=light` and `?mode=dark` (or toggle via `ThemeProvider`)
+
+## Dark mode accent contrast — mandatory
+
+Space accent colors are often **dark blues/purples**. In dark mode (`dark:bg-surface-800`), `text-app-accent` alone is **illegible** — the app name, pills, links, and badges disappear into the background.
+
+**This is a common failure.** AI must apply **all** of the following — not only `dark:text-white` on the App Shell header.
+
+### 1. `globals.css` (every app)
+
+Include the `.dark { --app-accent-text: #ffffff }` block and `.dark .text-app-accent` utility override from the `@theme` / `:root` section above. Copy from **`~/apps/jobs`** if unsure.
+
+### 2. `ThemeProvider` (every app)
+
+When setting accent tokens on `document.documentElement`, **accent text must flip to white in dark mode**:
+
+```ts
+root.style.setProperty('--app-accent-text', mode === 'dark' ? '#ffffff' : accent)
+```
+
+Do **not** set `--app-accent-text` to the raw accent hue when `mode === 'dark'`.
+
+### 3. `@vtc/ui` App Shell header
+
+Use **`@vtc/ui@^1.1.2`** (or newer). `AppShell` renders the app name with `text-app-accent dark:text-white` when **standalone**. When **embedded in the platform shell iframe**, hide the in-app app name — platform chrome shows it (`Platform shell chrome`).
+
+Prefer a **thin wrapper** around `VtcAppShell` from `@vtc/ui` — do not fork `AppShell.tsx` unless unavoidable.
+
+### 4. Component class rules
+
+| Use case | Class |
+|----------|-------|
+| Filled primary button | `bg-app-accent text-white` (unchanged) |
+| Pills / badges on `bg-app-accent-soft` | `bg-app-accent-soft text-app-accent-text` — **not** `text-app-accent` alone |
+| Links, labels, stats on dark surfaces | `text-app-accent-text` or `text-app-accent dark:text-white` |
+| App Shell header app name | **Standalone only** — handled by `@vtc/ui` `AppShell` (`dark:text-white`). **Embedded:** omit — platform chrome |
+| Hero / landing titles on dark bg | `text-app-accent dark:text-white` — see `landing-page.mdc` |
+
+`text-app-accent` is for **light surfaces** and filled accent backgrounds. On `dark:bg-surface-800` (or any dark surface), always pair with `dark:text-white` or use `text-app-accent-text`.
+
+### 5. Icons in dark mode (Heroicons, Lucide, emoji)
+
+Icon libraries use **`currentColor`** for stroke/fill. They inherit the **text color** of the icon element or its parent.
+
+| Pattern | Dark mode fix |
+|---------|----------------|
+| `<Icon className="w-6 h-6 text-app-accent" />` | Covered by `globals.css` `.dark .text-app-accent { color: #ffffff }` |
+| Parent `div` with `text-app-accent`, child `<Icon />` | Child inherits white via `currentColor` |
+| Preferred explicit pattern | `<Icon className="w-6 h-6 text-app-accent-text" />` inside `bg-app-accent-soft` box |
+| Hardcoded `stroke="#004a80"` or `fill="var(--app-accent)"` on SVG | **Will not fix** — use `currentColor` + text utility classes |
+| `<img>` icons | Unaffected — use filter or separate dark asset |
+
+**Landing page feature cards** (`landing-page.mdc`): put `text-app-accent-text` on the icon, not only on the wrapper:
+
+```tsx
+<div className="w-12 h-12 rounded-xl bg-app-accent-soft flex items-center justify-center mb-3">
+  <FeatureIcon className="w-6 h-6 text-app-accent-text" aria-hidden />
+</div>
+```
+
+### 6. Audit before shipping
+
+1. Open `?mode=dark&color=%23004a80` (or the space's real accent).
+2. Check: App Shell title, landing hero, benefit/tag pills, links, selected filter chips, avatar initials on soft accent bg.
+3. Grep: `text-app-accent` — every hit on a dark surface needs `dark:text-white`, `text-app-accent-text`, or the mandatory `globals.css` dark overrides.
+4. Check landing/feature **icons** in `?mode=dark` — must be white or high-contrast on `bg-app-accent-soft`.
+5. Confirm `package-lock.json` resolves `@vtc/ui` ≥ `1.1.1` (or local `AppShell` has `dark:text-white` on the app name).
+
+## Typography Standard (platform-wide — mandatory)
+
+All in-house VTC apps follow the **same semantic roles** — see **`typography.mdc`** (caption, body, section, tab-primary, row-title, overlay-title, etc.). **Do not invent per-app scales.**
+
+`ui.mdc` below covers **font family**, shell chrome, and component patterns. **Sizes and heading hierarchy** are defined only in `typography.mdc`.
+
+### 1. Font family
+
+- **Default:** platform system sans stack (`ui.mdc` / Tailwind `font-sans`).
+- **Network policy:** when shell passes `typography=network` and optional `font=lato|system`, set `--app-font-family` on `<html>` via `ThemeProvider` + `themeFonts.ts` — see `network-branding.mdc`.
+- **Do not** import custom fonts in individual apps unless `typography=network` (Lato loaded centrally).
+- **Do not** use app-specific `font-family` classes that bypass `--app-font-family`.
+- Type **sizes and weights** remain platform-standard in all modes.
+
+### 2. Base text
+
+- Body text: `text-sm` or `text-base` depending on density.
+- **Default app UI body:** `text-sm text-surface-700 dark:text-surface-300`
+- Long reading content / articles may use `text-base` with comfortable line height (`leading-relaxed`).
+
+```tsx
+<main className="text-sm text-surface-700 dark:text-surface-300">
+  {/* page content */}
+</main>
+```
+
+### 3. Header app name
+
+Top bar app name only — never a screen title.
+
+**Platform shell embed (default):** When the app runs inside the VTC shell iframe (`app.vtc.com` / `beta.vtc.com`), the **platform chrome bar** already shows the app title (including the space admin **display name** override). **Do not repeat the app name** in the child app's sticky header — header is **action slots only** (back when nested + slots 1–3 + ellipsis). See **Platform shell chrome** below.
+
+**Standalone / direct URL** (rare — marketing, external open, dev without iframe): show app name in the sticky top bar:
+
+```tsx
+<h1 className="text-lg font-semibold text-app-accent dark:text-white truncate min-w-0">{appName}</h1>
+```
+
+- Long names must `truncate`. Matches **overlay-title** in `typography.mdc`.
+
+### 4. Page / screen titles (in `<main>`)
+
+**Embedded in platform shell:** do not use large page titles — the shell already shows context. Use **section** (`text-sm font-semibold`) for in-panel structure only.
+
+**Standalone** (rare): if a screen needs a visible title, use **overlay-title**, not `text-2xl`:
+
+```tsx
+<h2 className="text-lg font-semibold text-gray-900 dark:text-white">{screenTitle}</h2>
+```
+
+### 5. Section headings
+
+```tsx
+<h3 className="text-sm font-semibold text-gray-900 dark:text-white">{sectionTitle}</h3>
+```
+
+Card groups, form sections, settings groups — **section** role in `typography.mdc`.
+
+### 6. Card / list titles
+
+**Compact** (default):
+
+```tsx
+<h4 className="text-sm font-semibold text-gray-900 dark:text-white">{itemTitle}</h4>
+```
+
+Do **not** use `text-base font-semibold` for default rows unless a deliberate feature card (still `text-sm` preferred).
+
+### 7. Body / supporting text
+
+```tsx
+<p className="text-sm text-surface-600 dark:text-surface-300 leading-relaxed">{description}</p>
+```
+
+Use for descriptions, helper text, summaries, subtitles, and secondary copy.
+
+### 8. Captions / metadata
+
+```tsx
+<span className="text-xs text-surface-500 dark:text-surface-400">{timestamp}</span>
+```
+
+Use for timestamps, counts, labels, secondary metadata, and small hints.
+
+### 9. Labels / tags / badges
+
+```tsx
+<span className="text-xs font-medium">{label}</span>
+```
+
+- **Uppercase** only for very short status labels (e.g. `NEW`, `VIP`) — `uppercase` + `tracking-wide` optional.
+- **Avoid uppercase** for translated or longer labels.
+
+### 10. Buttons
+
+```tsx
+<button className="text-sm font-medium ...">{label}</button>
+```
+
+- Standard button text: `text-sm font-medium`
+- Primary action buttons may use `font-semibold` only when visually needed
+- Icon-only buttons must have `aria-label` (and `title`) from i18n — no visible text
+
+### 11. Line height
+
+| Context | Class |
+|---------|-------|
+| Compact UI rows | `leading-tight` or `leading-snug` |
+| Normal body / help text | `leading-relaxed` |
+| Long-form article content | `prose prose-slate dark:prose-invert` |
+
+### 12. Rules
+
+- **Do not** create random text sizes in app code unless there is a clear layout reason.
+- Prefer the defined scale: `text-xs`, `text-sm`, `text-base`, `text-lg`, `text-xl`, `text-2xl`.
+- **Avoid `text-3xl+`** inside apps except landing pages (`landing-page.mdc`), marketing pages, or empty-state hero screens.
+- **Do not** use `font-light` or `font-black` in normal app UI.
+- **Do not** use `text-app-accent` for large blocks of text — reserve for app name, selected states, links, and important accents.
+
+### Quick reference
+
+| Role | Classes |
+|------|---------|
+| Header app name (standalone only) | `text-xl font-bold text-app-accent dark:text-white truncate` |
+| Page title (list / home) | `text-2xl font-bold text-gray-900 dark:text-white` |
+| Page title (nested / form) | `text-xl font-semibold text-gray-900 dark:text-white` |
+| Section heading | `text-lg font-semibold text-gray-900 dark:text-white` |
+| Card / list title | `text-sm font-semibold text-gray-900 dark:text-white` |
+| Body / supporting | `text-sm text-surface-600 dark:text-surface-300` |
+| Caption / metadata | `text-xs text-surface-500 dark:text-surface-400` |
+| Tag / badge | `text-xs font-medium` |
+| Button | `text-sm font-medium` |
+
+## App Shell — mandatory (all in-house VTC apps)
+
+Every authenticated screen uses the **standard App Shell** — do not invent custom navigation (sidebars, tab bars, hamburger menus) unless the brief explicitly requires it.
+
+| Zone | Rule |
+|------|------|
+| **Header** | Sticky top bar — `ui.mdc` header pattern below |
+| **Body** | Centered responsive container — width by screen purpose (below) |
+| **Actions** | **Header action slots** only — max 3 icons + vertical ellipsis; no bottom bar, no FAB — see below |
+| **Text in top bar** | **Standalone:** app name (left). **Shell iframe embed:** **no app name** — platform chrome shows it; slots + back only. Also **no app-name home heading or subtitle** when embedded (§ Platform shell chrome) |
+
+- Authenticated home = **task/list screen**, not a dashboard — `ux-screens.mdc`
+- Admin/settings entry = **ellipsis menu** by default — never plain text links or labeled menus in the top bar
+
+## Platform shell chrome — no app name anywhere when embedded (mandatory)
+
+Child apps on `*.apps.vtc.com` open **inside the VTC shell iframe** (`app.vtc.com`, `beta.vtc.com`, desktop and mobile). The shell renders a **grey chrome bar** above the iframe with:
+
+- Close (left)
+- **App title centered** — space admin display name when set, else module name
+- App tools / help (right)
+
+The chrome is the **only** place the app name appears. When embedded, a child app must not show its own name **anywhere**:
+
+| Surface | Embedded in shell | Standalone (direct tab, signed-out landing) |
+|---------|-------------------|---------------------------------------------|
+| Sticky header (left) | `BackButton` when nested — **no app name** | `BackButton` when nested + app name |
+| Home / root screen heading | **None** — no `<h1>`/`<h2>`/`pageTitle`/`PageTitle`/hero that says the app name | Unchanged |
+| Home subtitle / tagline | **None** — no "Your personal X", "Welcome to X", "X for your Space", "Shared with this Space's team"-style lane captions | Unchanged |
+| Nested screen titles (`backHref` set: "Library", "New post", …) | ✅ Keep — they name the **screen**, not the app | ✅ |
+| Empty states / help copy that mention the app in a sentence | ✅ OK ("Connect an account to start posting") — avoid leading with the name | ✅ |
+| Signed-out **landing page** / promo (`landing-page.mdc`) | Unchanged (hero may show the app name) | Unchanged |
+
+**Home screen starts straight with content or actions** — stats, list, primary CTA, search. No title block above it. (`ux-screens.mdc`: authenticated home = task/list screen.)
+
+### Use `@vtc/ui` ≥ 1.4.0 (default does the right thing)
+
+`@vtc/ui` **1.4.0** `AppShell` hides `appName` **by default** when `isEmbeddedInShell()` is true, and drops a **root** `pageTitle` that equals the app name. Nested `pageTitle` (with `backHref`) always renders.
+
+```tsx
+// src/components/AppShell.tsx — thin wrapper (no embed logic needed with ui ≥ 1.4.0)
+<VtcAppShell appName={displayName} addToken={addTokenToUrl} {...rest}>{children}</VtcAppShell>
+
+// Home page — no pageTitle, no subtitle
+<AppShell {...headerSlots(t)} overflow={overflow(t)}>
+  <StatsRow … />
+  <PrimaryCta … />
+</AppShell>
+```
+
+- `hideAppName` prop: `undefined` = auto (hide when embedded) · `true` = always hide · `false` = always show (rare standalone-only surfaces).
+- `isEmbeddedInShell()` / `useEmbeddedInShell()` (hydration-safe) are exported for app code that renders its **own** header or hero.
+- `@vtc/ui` **< 1.4.0 has no `hideAppName` prop** — older versions of this rule referenced it before it shipped, so passing it did nothing. Upgrade: `npm install @vtc/ui@^1.4.0` (lockfile must resolve ≥ 1.4.0; CI uses `npm ci`).
+
+### Custom headers (apps that don't use `@vtc/ui` AppShell)
+
+```ts
+import { useEmbeddedInShell } from '@vtc/ui' // or copy:
+export function isEmbeddedInShell(): boolean {
+  if (typeof window === 'undefined') return false
+  try { return window.self !== window.top } catch { return true }
+}
+```
+
+Any component that renders the app name (`t('app.name')`, `t('app.title')`, `APP_NAME`, env display name, literal) in a header, home heading or home subtitle must gate it on `!embedded`.
+
+Common miss — a header whose title **falls back** to the app name: `const displayTitle = title || t('app.title')`. Gate the fallback (and a home page that passes the app name as `title`):
+
+```tsx
+const embedded = useEmbeddedInShell()
+const displayTitle = embedded && (!title || title === t('app.title')) ? '' : title || t('app.title')
+```
+
+Hardcoded literals count too (`<h1>Sheet</h1>` in an app named Sheet), as do `<h3>` / `SectionHeading` list headings on home that just repeat the app name. Next.js: use the hook (`useSyncExternalStore`) — never read `window` during render.
+
+- **Do not** remove the sticky header entirely — keep action slots, back, and dual-theme bar styling; only omit the **app name** text.
+- Iframe detection is `window.self !== window.top`; it works on mobile browsers and the VTC native apps (shell loads child apps in an iframe there too). No query-param detection.
+
+### Verify (App Builder / QA — required before publish)
+
+1. **Static:** `~/cursor_rules/scripts/check-embedded-app-name.sh <app-dir>` → must print `PASS` (exit 0). Checks `@vtc/ui` lock version, home `pageTitle`/headings/subtitles that echo the app name, and custom headers without an embed guard (including `title || t('app.title')` fallbacks and case-insensitive `<h1–h3>` literals). A reviewed false positive on a **nested** or signed-out screen can be silenced with a `vtc-embed-ok` comment on that line or the line above — never on the home screen.
+2. **Runtime:** open the app from `app.vtc.com/<module>` (or beta) at a **390×844 mobile viewport** → chrome bar shows the title; the iframe shows **no** text equal to the app name on the home screen (header or body). In DevTools on the iframe: `[...document.querySelectorAll('h1,h2,h3,header *,main > p')].filter(e => e.textContent.trim().toLowerCase() === '<app name>'.toLowerCase())` → `[]`.
+3. Open a nested screen → its screen title still shows.
+4. Open the app URL **directly** in a top-level tab → header shows the app name (standalone); signed-out landing unchanged.
+5. Rename the app in space Access settings → chrome title updates; child still shows no name.
+
+## Responsive Layout Standard
+
+Apps must be **mobile-first but responsive**. Do **not** force all authenticated screens into a 450px container.
+
+On desktop, standard list screens must **not** be constrained to mobile width.
+
+| Bad | Good |
+|-----|------|
+| List page centered in 450px on a 1920px monitor | List page at ~760–900px — comfortable reading, adequate spacing |
+
+**Minimum viewport width:** 360px. All containers: `mx-auto px-4 sm:px-6`.
+
+**Header and page body use the same max-width** for a given screen.
+
+### Width by content type
+
+| Tier | `max-width` | Tailwind | Use for |
+|------|-------------|----------|---------|
+| **Narrow forms** | 450px | `max-w-[450px]` | Settings, login-like flows, short forms, simple create/edit |
+| **Reading** | 760px | `max-w-[760px]` | Articles, documentation, blog posts, long-form detail |
+| **Standard CRUD** *(default)* | 900px | `max-w-[900px]` | Lists, admin screens, inventory, CRM, tasks, expenses, article listings, bookings, article editors |
+| **Visual / grid** | 1100–1200px | `max-w-[1100px]` or `max-w-[1200px]` | Catalogs, portfolios, galleries, shops, property listings, card dashboards |
+
+**Default authenticated screens:** `max-w-[900px]`. Use `max-w-[450px]` only when the screen is intentionally form-focused or phone-like.
+
+```tsx
+// Optional shared constant — src/lib/layout.ts
+export const CONTAINER = {
+  narrow: 'max-w-[450px]',
+  reading: 'max-w-[760px]',
+  standard: 'max-w-[900px]',  // default
+  visual: 'max-w-[1200px]',
+} as const
+```
+
+### Articles app
+
+| Screen | Container |
+|--------|-----------|
+| Article list | `max-w-[900px]` |
+| Article detail | `max-w-[760px]` |
+| Article editor | `max-w-[900px]` |
+
+## Sticky Header (App Shell)
+
+Pass the **same container class** as the page body (`CONTAINER.standard`, etc.).
+
+**Shell iframe embed:** omit app name — platform chrome shows it (`Platform shell chrome` above). Header left cluster is back-only when nested; action slots unchanged.
+
+**Standalone:**
+
+```tsx
+<header className="sticky top-0 z-50 h-16 bg-white dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 shadow-sm">
+  <div className={`h-full w-full ${CONTAINER.standard} mx-auto px-4 sm:px-6 flex items-center justify-between gap-3`}>
+    <div className="flex items-center gap-2 min-w-0">
+      {showBack && <BackButton />}
+      {!embedded && (
+        <h1 className="text-xl font-bold text-app-accent dark:text-white truncate min-w-0">{appName}</h1>
+      )}
+    </div>
+
+    <div className="flex items-center gap-0.5 shrink-0">
+      {slot1 && <HeaderSlot slot={1} {...slot1} />}
+      {slot2 && <HeaderSlot slot={2} {...slot2} />}
+      {slot3 && <HeaderSlot slot={3} {...slot3} />}
+      <HeaderOverflowMenu items={overflowItems} />
+    </div>
+  </div>
+</header>
+```
+
+- **Root / list home (embedded):** action slots only — no back, **no app name**
+- **Root / list home (standalone):** app name on the left — no back button
+- **Nested screens:** `BackButton` + (standalone only) app name — screen title goes in **page body**, not the top bar
+- Long app names: `truncate`; do not hardcode `text-indigo-*` — use accent tokens
+- **All screen actions** (create, save, search, settings, admin) live in the header slots — no bottom bar, no FAB
+
+## Back button
+
+Use on **nested / detail views only** — in the left header cluster. **Embedded:** back only (no app name after it). **Standalone:** immediately before app name. Not on list home.
+
+| Property | Value |
+|----------|-------|
+| Size | `w-10 h-10` (40px touch target) |
+| Shape | `rounded-xl` |
+| Padding | `p-2` |
+| Icon size | `w-5 h-5` |
+| Position | **Standalone:** immediately before app name (`gap-2` in left cluster). **Embedded:** alone in left cluster when nested |
+| Visibility | Only when nested / detail view |
+| Hover | `hover:bg-gray-100 dark:hover:bg-surface-700` |
+
+```tsx
+<button
+  type="button"
+  onClick={() => router.back()}
+  aria-label={t('common.back')}
+  title={t('common.back')}
+  className="inline-flex items-center justify-center w-10 h-10 p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-surface-700 shrink-0"
+>
+  <BackIcon className="w-5 h-5" />
+</button>
+```
+
+## Top bar — icons only (mandatory)
+
+The sticky top bar is **icon-driven navigation**. Text belongs in page content, not the bar. **Do not let app developers pick arbitrary icons** — use **Header action slots** only.
+
+| Zone | Allowed | Forbidden |
+|------|---------|-----------|
+| **Left** | **Embedded:** back icon when nested only. **Standalone:** app name (text) + back when nested | Screen titles, section headings, breadcrumbs with text labels; **embedded:** app name (chrome shows it) |
+| **Right** | Up to **3 semantic slot icons** + **vertical ellipsis** (slot 4) | Arbitrary icons, text nav links, tabs, labeled buttons, bottom bars, FABs |
+
+**Rules:**
+
+- **Max 3 icons** in slots 1–3; everything else goes in the **slot 4 ellipsis menu**
+- **Slot 4 is always** the vertical ellipsis (`MoreVertical`) on the **far right**
+- Every top-bar action follows **Standard action icons** — `aria-label` + `title` from i18n
+- **No text labels** in the top bar
+- **No bottom action bar** — Save, Cancel, Create, Admin, Settings, Export, etc. use header slots or ellipsis menu
+- **No FAB** — floating action buttons are forbidden; primary actions use **slot 1**
+- Screen context (e.g. "Edit invoice", "Settings") → page body heading below the header, not in the bar
+
+## Header action slots (platform-wide — mandatory)
+
+Fixed positions so every VTC app feels consistent. Use the **platform icon set** — never invent one-off icons for standard actions.
+
+| Slot | Position | Purpose | Platform icon | Examples |
+|------|----------|---------|---------------|----------|
+| **1** | 1st (left of group) | **Primary action** | `Plus` (create) · `Check` (save) · `ScanLine` (scan) | Add, New, Create, Save, Scan |
+| **2** | 2nd | **Search or Filter** | `Search` · `ListFilter` | Search, Filter — pick **one** per screen, not both unless the other is in ellipsis |
+| **3** | 3rd | **Context action** | `UserPlus` · `Share2` · `ShoppingCart` · `Calendar` · `Settings` | Invite, Share, Cart, Calendar, app-specific |
+| **4** | **Always far right** | **Overflow menu** | `MoreVertical` | Admin, Settings, Export, Delete, duplicate, secondary actions |
+
+**Slot rules:**
+
+- Use **0–3** of slots 1–3 as needed — never more than 3 visible icons before ellipsis
+- **Slot 4 is always present** on authenticated App Shell screens — even when slots 1–3 are empty, ellipsis holds settings/admin/overflow
+- Map each app action to a slot — do not add a 5th header icon; put it in the ellipsis menu
+- **List home:** slot 1 = Create, slot 2 = Search or Filter, slot 3 = app context, slot 4 = ellipsis (admin, settings, …)
+- **Edit / create form:** slot 1 = Save (`Check`), slot 2/3 optional, Cancel via `BackButton`; Delete/Duplicate in ellipsis
+- **Admin / settings gear** goes in the **ellipsis menu** by default — not a custom header icon unless slot 3 context warrants it
+- Icons must come from the shared platform set (Lucide names above or `@vtc/ui` / `src/components/header/icons.ts`) — same glyph across all apps for the same semantic action
+
+```tsx
+// HeaderOverflowMenu — slot 4, always far right
+<button
+  type="button"
+  aria-label={t('common.moreActions')}
+  title={t('common.moreActions')}
+  aria-haspopup="menu"
+  aria-expanded={open}
+  className="inline-flex items-center justify-center min-w-[40px] min-h-[40px] p-2 rounded-xl text-surface-600 dark:text-surface-300 hover:bg-gray-100 dark:hover:bg-surface-700"
+  onClick={() => setOpen(v => !v)}
+>
+  <MoreVertical className="w-5 h-5" />
+</button>
+{open && (
+  <div role="menu" className="absolute right-0 top-full mt-1 min-w-[180px] rounded-xl border ... shadow-lg z-50">
+    {overflowActions.map(action => (
+      <button key={action.id} role="menuitem" className="w-full flex items-center gap-2 px-3 py-2 text-sm ...">
+        {action.icon}
+        <span>{action.label}</span>
+      </button>
+    ))}
+  </div>
+)}
+```
+
+## Standard action icons
+
+Default pattern for **all top-bar icon actions** (create, filter, settings, ellipsis, etc.). Back button uses the same icon size and hover — see **Back button** for its fixed `w-10 h-10` sizing.
+
+| Property | Value |
+|----------|-------|
+| Button size | `min-w-[40px] min-h-[40px]` |
+| Padding | `p-2` |
+| Shape | `rounded-xl` |
+| Icon size | `w-5 h-5` |
+| Color | `text-surface-600 dark:text-surface-300` |
+| Hover | `hover:bg-gray-100 dark:hover:bg-surface-700` |
+| Active / selected | `text-app-accent bg-app-accent/10` |
+
+```tsx
+const actionClass = (active = false) =>
+  [
+    'inline-flex items-center justify-center min-w-[40px] min-h-[40px] p-2 rounded-xl',
+    'text-surface-600 dark:text-surface-300',
+    'hover:bg-gray-100 dark:hover:bg-surface-700',
+    active && 'text-app-accent bg-app-accent/10',
+  ].filter(Boolean).join(' ')
+
+<button type="button" aria-label={label} title={label} className={actionClass(isActive)}>
+  <PlusIcon className="w-5 h-5" />
+</button>
+```
+
+- Icons inherit color via `currentColor` — apply `text-*` on the button, not hardcoded fills on SVG paths
+
+## Admin / settings gear
+
+Admin and settings are **ellipsis menu items by default** — not a standalone header icon unless slot 3 context explicitly warrants it (e.g. settings-heavy app). When shown as slot 3, use the **Settings** icon from the platform set — same as **Standard action icons**; border emphasis only on visual-app public toolbars per brief.
+
+## Header actions — icon-only (required)
+
+All header actions are **icon-only** at every viewport width — no text labels in the top bar. Use **Standard action icons** classes.
+
+```tsx
+const [linkHref, setLinkHref] = useState(href)
+useEffect(() => { setLinkHref(addTokenToUrl(href)) }, [href])
+
+<Link
+  href={linkHref}
+  aria-label={label}
+  title={label}
+  className={actionClass(active)}
+>
+  <span className="inline-flex shrink-0 w-5 h-5">{icon}</span>
+</Link>
+```
+
+- Apply `addTokenToUrl` **after mount** (`useState` + `useEffect`) — avoids hydration errors from JWT in `href`
+- Inline SVG icons per action — `w-5 h-5`, `currentColor` fill/stroke; use **Header action slots** icons only
+- Primary CTAs (Create, Save) use **slot 1** — never a bottom bar or FAB
+- i18n: `label` from locale keys (accessibility via `aria-label` / `title` when icon-only)
+
+## Runtime Accent Color Standard
+
+All VTC apps must use **runtime accent CSS tokens** — never hardcoded `indigo-*`, `purple-*`, or per-app hex in components.
+
+### How the shell passes theme to child apps
+
+When a user opens an app from the **VTC shell** (personal or space context), the shell injects query parameters on the iframe URL. Child apps **cannot** read `app.vtc.com` / `app.posif.com` localStorage — they inherit branding **only from the URL** (and what they persist from that URL on first load).
+
+| Param | Source | Child app use |
+|-------|--------|----------------|
+| `token` | Shell session JWT | Auth — `bootstrapAuthFromUrl()` |
+| `user` | Active user id | Validate against JWT `user_id` |
+| `group` / `g` | Active **space** id (`0` = personal) | Tenancy — `group_id` scope (`spaceScope.ts` / `getDbWithAuth`) |
+| `mode` | User or space theme | `light` \| `dark` → `.dark` on `<html>` |
+| `color` | **Space / network branding** | Runtime accent → `--app-accent*` tokens |
+| `typography` | **Network branding policy** | `platform` \| `network` — app font policy |
+| `font` | When `typography=network` | `system` \| `lato` → `--app-font-family` |
+| `lang` | User locale | i18n provider |
+| `tz` | User timezone preference (IANA) | Display times — `resolveUserTimeZone()` from `@vtc/client` ≥ 1.2.2 |
+
+**User timezone (required for user-visible datetimes):** The shell Settings → General preference injects `tz` (e.g. `America/Sao_Paulo`). Child apps must:
+
+1. Read `tz` from the URL and call `preserveThemeParams()` so it persists as `posif_tz` (`@vtc/client` ≥ **1.2.2**).
+2. Format all user-visible datetimes with that IANA zone (`Intl` `timeZone` / equivalent). Fallback to the browser zone if `tz` is missing/invalid.
+3. Listen for shell `THEME_SYNC` with `timezone` and update live (same path as `lang` / `mode`).
+4. Keep storing/sending instants in **UTC / ISO** on the API — timezone is display (+ scheduling UI), not storage.
+
+Do **not** show raw server-local or bare UTC strings to users when a shell timezone is available.
+
+**Space color inheritance:** When the app is opened inside a **network space**, the shell sets `color` from that space's configured accent (network branding). The app must **not** override this with a fixed palette. Layout, surfaces, typography, and spacing stay platform-standard; **only accent** changes.
+
+```
+app.vtc.com (shell, space theme = #7C3AED)
+  └─ iframe → vault.apps.vtc.com/?token=…&group=1205&mode=dark&color=%237C3AED&lang=en&tz=America/Sao_Paulo
+                └─ ThemeProvider reads color → sets --app-accent* on documentElement
+```
+
+### Resolution order (accent color)
+
+Apply in `LayoutContent.tsx` (or root client layout); pass result to `ThemeProvider`:
+
+1. **`color` URL parameter** — shell-injected space/network branding (`?color=#7C3AED` or `?color=green`)
+2. **`NEXT_PUBLIC_APP_ACCENT`** — app publisher default (env, committed in `.env.production`)
+3. **Persisted `posif_color`** — from `preserveThemeParams()` when client navigation drops query params
+4. **Platform fallback — VTC Blue `#004A80`**
+
+```tsx
+// LayoutContent.tsx
+const mode = searchParams.get('mode') ?? 'light'
+const color =
+  searchParams.get('color') ??
+  process.env.NEXT_PUBLIC_APP_ACCENT ??
+  undefined // ThemeProvider → #004A80
+const lang = searchParams.get('lang') ?? 'en'
+const tz = searchParams.get('tz') // IANA; use resolveUserTimeZone() from @vtc/client
+
+useEffect(() => {
+  bootstrapAuthFromUrl()   // token, user, group
+  preserveThemeParams()    // mode, color, lang, tz → localStorage
+}, [])
+```
+
+`addTokenToUrl()` must **re-append** `token`, `group`, `mode`, `color`, `typography`, `font`, and `lang` on client navigation so space/network branding survives in-app links.
+
+### CSS tokens (`ThemeProvider` + `globals.css`)
+
+Set on `document.documentElement` at runtime (legacy v3: map in `tailwind.config`; v4: `@theme` block):
+
+| Token | Purpose |
+|-------|---------|
+| `--app-accent` | Primary fill, app title, active states |
+| `--app-accent-hover` | Hover on primary buttons |
+| `--app-accent-soft` | Soft backgrounds, empty-state highlights |
+| `--app-accent-border` | Accent borders, selected filter rings |
+| `--app-accent-text` | Foreground accent on dark surfaces and soft accent backgrounds — **white in dark mode** |
+
+`:root` in `globals.css` holds **fallbacks only** (VTC Blue `#004A80`). `ThemeProvider` overwrites them when `color` is present.
+
+```css
+:root {
+  --app-accent: #004a80;
+  --app-accent-hover: #003a6e;
+  --app-accent-soft: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  --app-accent-border: color-mix(in srgb, var(--app-accent) 35%, transparent);
+  --app-accent-text: var(--app-accent);
+}
+
+.dark {
+  --app-accent-text: #ffffff;
+}
+
+@layer utilities {
+  .dark .text-app-accent {
+    color: #ffffff;
+  }
+  .dark .text-app-accent-text {
+    color: #ffffff;
+  }
+}
+```
+
+`ThemeProvider` must set runtime tokens including:
+
+```ts
+root.style.setProperty('--app-accent-text', mode === 'dark' ? '#ffffff' : accent)
+```
+
+Implement `applyAccentTokens()` in `src/lib/theme.ts` — normalize hex and named colors (`green`, `blue`, …), derive hover via darken/`color-mix`.
+
+### Component rules
+
+- **Do** use `bg-app-accent`, `text-app-accent`, `ring-app-accent`, `border-app-accent-border`, `bg-app-accent-soft`
+- **Do** pair surfaces with `surface-*` / gray tokens — accent is for actions and emphasis, not page backgrounds
+- **Do** support dual theme: every `text-app-accent` on a dark surface needs `dark:text-white`, `text-app-accent-text`, or the mandatory `globals.css` dark override — see **Dark mode accent contrast**
+- **Do not** hardcode `#3B82F6`, `text-indigo-600`, `bg-indigo-600`, etc. in components
+- **Do not** read parent shell localStorage for theme
+- **Do not** add fallback accent hex in JSX — missing env/URL → `ThemeProvider` platform default
+
+**Apply accent tokens to:** app title, primary buttons, active tabs, links, focus rings, selected filters, badges, loading indicators, empty-state highlights.
+
+**Layout, spacing, cards, headers, forms, and dark mode stay platform-standard.** Only the accent hue changes per space or URL.
+
+### Verify
+
+- Open app from shell in a branded space → header/buttons match space `color`
+- Open with `?color=#16a34a&mode=dark` → green accent fills/buttons; **titles, pills, and links remain readable** (white accent text on dark surfaces)
+- Navigate via in-app links → `addTokenToUrl` preserves `color` and `group`
+- No `color` param and no env → VTC Blue `#004A80`
+
+## VTC Theme — Visual Identity
+
+The VTC look comes from **consistent structure**, not a fixed color:
+
+- Sticky app header — **standalone:** app name left; **shell embed:** no app name (platform chrome); **header action slots** (max 3 + vertical ellipsis); no bottom bar
+- **Typography Standard** — platform type scale; no custom fonts per app
+- Mobile-first **responsive** centered container
+- Rounded cards
+- Consistent forms
+- Clear list / detail / edit patterns
+- Dark mode support
+- **Runtime accent color**
+
+| Property | Value |
+|----------|-------|
+| Border radius | `rounded-xl` (12px) or `rounded-2xl` (16px) |
+| Shadows | `shadow-md` / `shadow-lg` on cards & buttons |
+| Borders | `border-surface-200 dark:border-surface-700` |
+| Surfaces | `surface-*` slate tokens — not accent-colored |
+| Accent | `--app-accent*` tokens — never hardcoded indigo/purple in components |
+| Hover effects | `hover:shadow-lg` on cards & buttons |
+| Destructive | `red-600` — semantic, not accent |
+
+## Admin / Edit Page Layout
+
+Use App Shell + this structure. Pick container tier by form complexity:
+
+| Form type | Container |
+|-----------|-----------|
+| Settings, short/simple create/edit | `max-w-[450px]` |
+| Standard CRUD editor, article editor | `max-w-[900px]` |
+
+```tsx
+<>
+  <AppShellHeader
+    slot1={{ icon: 'check', label: t('common.save'), onClick: handleSave }}
+    overflow={[{ icon: 'trash-2', label: t('common.delete'), onClick: handleDelete }]}
+    nested
+    containerClass={CONTAINER.standard}
+  />
+  <main className={`${CONTAINER.standard} mx-auto px-4 sm:px-6 py-6 text-sm text-surface-700 dark:text-surface-300`}>
+    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">{pageTitle}</h2>
+    {/* Main form or editor — floating-label inputs */}
+    <form>...</form>
+
+    {/* Optional collapsible panels — assistant, metadata, advanced settings */}
+    <CollapsiblePanel title={t('edit.assistant')}>...</CollapsiblePanel>
+    <CollapsiblePanel title={t('edit.settings')}>...</CollapsiblePanel>
+  </main>
+</>
+```
+
+- Header: back (when nested) + (**standalone only** app name) + **slot 1 Save** + ellipsis (delete, settings, …); screen title in page body
+- Body: single main form/editor column; side panels **collapsible** below or beside on wide layouts — not permanent sidebars
+- **No bottom action bar** — Save in slot 1; Cancel via `BackButton`; secondary actions in ellipsis
+- No `confirm()` on Cancel — explicit choice via back or ellipsis menu item
+
+## Public Content / Detail Page Layout
+
+Articles, posts, catalog items, case studies — clean **reading** layout (`max-w-[760px]`):
+
+```tsx
+<main className="max-w-[760px] mx-auto px-4 sm:px-6 py-6 pb-16">
+  {/* Top action row — share, edit (icon), back */}
+  <div className="flex items-center justify-between gap-2 mb-4">...</div>
+
+  {/* Hero media when relevant */}
+  {coverUrl && (
+    <img src={coverUrl} alt="" className="w-full rounded-2xl object-cover mb-6 shadow-md" />
+  )}
+
+  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h2>
+  {subtitle && <p className="mt-1 text-sm text-surface-600 dark:text-surface-300 leading-relaxed">{subtitle}</p>}
+  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-surface-500 dark:text-surface-400">
+    {author && <span>{author}</span>}
+    {tags?.map(tag => (
+      <span key={tag} className="px-2 py-0.5 rounded-full bg-app-accent-soft text-app-accent-text text-xs font-medium">{tag}</span>
+    ))}
+  </div>
+  <article className="mt-6 prose prose-slate dark:prose-invert max-w-none">{body}</article>
+</main>
+```
+
+- Reading-first: generous vertical rhythm, no nested cards around body copy
+- Top action row: icon buttons aligned right (or `BackButton` left + actions right)
+- Hero media: full container width, `rounded-2xl`, only when the entity has cover/image
+- Long-form with embedded wide media/tables: may use `max-w-[900px]` when the brief requires it
+
+## Buttons (All Must Have Visible Backgrounds)
+
+Use accent tokens for primary actions — not hardcoded indigo/purple.
+
+```tsx
+{/* Primary */}
+<button className="px-4 py-2 text-sm font-medium bg-app-accent hover:bg-app-accent-hover text-white rounded-xl shadow-md hover:shadow-lg transition-all">
+
+{/* Secondary */}
+<button className="px-4 py-2 text-sm font-medium rounded-full bg-gray-200 dark:bg-surface-700 text-gray-700 dark:text-surface-200 hover:bg-gray-300 dark:hover:bg-surface-600 transition-colors">
+
+{/* Destructive — semantic red, not accent */}
+<button className="px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-md hover:shadow-lg transition-all">
+```
+
+**Do not use FABs** — primary create/add actions use **header slot 1** (`ui.mdc`).
+
+## Floating Label Inputs (All Inputs Must Use This)
+
+Use **`@vtc/ui`** — do not copy-paste field markup into each app:
+
+```tsx
+import { FloatingInput, FloatingTextarea, FloatingSelect } from '@vtc/ui'
+
+<FloatingInput
+  id="name"
+  label={t('form.name')}
+  value={name}
+  onChange={(e) => setName(e.target.value)}
+  required
+  error={errors.name}
+/>
+
+<FloatingTextarea id="notes" label={t('form.notes')} value={notes} onChange={...} rows={5} />
+
+<FloatingSelect id="status" label={t('form.status')} value={status} onChange={...}>
+  <option value="open">{t('status.open')}</option>
+</FloatingSelect>
+```
+
+| Prop | Purpose |
+|------|---------|
+| `id` | Required — ties label to control |
+| `label` | Floated label text (i18n) |
+| `required` | Shows red `*`; pass to native control |
+| `error` | Inline message + `aria-invalid` + red border |
+| `labelSurface` | `default` \| `panel` — label notch background when nested in a tinted panel |
+
+Raw markup (only if `@vtc/ui` cannot be used):
+
+```tsx
+<div className="relative">
+  <input
+    type="text"
+    id="fieldName"
+    value={value}
+    onChange={handleChange}
+    placeholder=" "
+    className="peer w-full px-4 py-3 border border-surface-300 dark:border-surface-600 rounded-xl focus:ring-2 focus:ring-app-accent focus:border-app-accent dark:bg-surface-700 dark:text-white bg-white shadow-sm hover:shadow-md transition-shadow"
+  />
+  <label
+    htmlFor="fieldName"
+    className="absolute left-4 top-3.5 text-surface-500 dark:text-surface-400 transition-all duration-200 pointer-events-none bg-white dark:bg-surface-800 px-1
+      peer-focus:-top-2.5 peer-focus:text-xs peer-focus:text-app-accent-text
+      peer-[:not(:placeholder-shown)]:-top-2.5 peer-[:not(:placeholder-shown)]:text-xs peer-[:not(:placeholder-shown)]:text-surface-600"
+  >
+    Label {required && <span className="text-red-500">*</span>}
+  </label>
+</div>
+```
+
+- ✅ `placeholder=" "` (single space) is required for the float effect
+- ✅ Active: prominent accent border + ring (`ring-app-accent`)
+- ✅ Inactive: thin light grey border
+
+## Cards — Never Nested
+
+```tsx
+{/* ❌ DON'T — card inside card */}
+<div className="bg-white rounded-xl shadow-md p-4">
+  <div className="bg-white rounded-xl shadow-md p-4"> {/* nested card */} </div>
+</div>
+
+{/* ✅ DO — use borders/spacing to separate sections */}
+<div className="bg-white dark:bg-surface-800 rounded-xl shadow-md hover:shadow-lg transition-shadow p-4">
+  <h2>Title</h2>
+  <div className="border-t border-surface-200 dark:border-surface-700 pt-4 mt-4">
+    Separated section
+  </div>
+</div>
+```
+
+## Modal Pattern
+
+```tsx
+<div onClick={() => setIsOpen(false)} className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+  <div onClick={e => e.stopPropagation()} className="bg-white dark:bg-surface-800 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+    {/* content */}
+  </div>
+</div>
+```
+
+## Avatar
+
+```tsx
+<div className="w-12 h-12 bg-app-accent rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-md">
+  JD
+</div>
+```
+
+---
+
+## Visual Apps — image-first layouts
+
+Use for **portfolio, gallery, catalog, and creative showcase** apps where images are the primary content. Still follow VTC structure tokens (`surface-*`, dual theme, runtime accent, standard container). Reference: `portfolio` app.
+
+### When to use
+
+| App type | Public entry | Admin |
+|----------|--------------|-------|
+| CRM, inventory, bookings | List/task screen + sticky header | Floating-label forms |
+| **Visual / portfolio** | **Grid/masonry immediately** — minimal chrome | Simplified `.input` + upload fields OK |
+
+### Public page — minimal chrome
+
+- **No sticky header** on the public browse view unless the brief requires branding nav.
+- **No hero banner** by default — let work fill the viewport.
+- Start with **toolbar row**: category filters (left) + layout switcher and optional admin gear icon (right).
+- Use container: `max-w-[1200px] mx-auto px-4 sm:px-6 pt-6 pb-16` (visual/grid tier).
+
+```tsx
+<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+  <CategoryPills … />
+  <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+    {isAdmin && <AdminGearLink />}
+    <LayoutSwitcher … />
+  </div>
+</div>
+```
+
+### Category filter pills
+
+Active = filled accent (`bg-app-accent`); inactive = soft gray/surface. Use `rounded-full`, not `rounded-xl`.
+
+```tsx
+<button
+  className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+    active
+      ? 'bg-app-accent text-white shadow-md'
+      : 'bg-gray-100 dark:bg-surface-700 text-gray-700 dark:text-surface-200 hover:bg-gray-200 dark:hover:bg-surface-600'
+  }`}
+/>
+```
+
+### Layout switcher (segmented control)
+
+Masonry · Grid · List — one bordered group, active segment `bg-app-accent text-white`.
+
+```tsx
+<div className="inline-flex rounded-xl border border-surface-200 dark:border-surface-700 overflow-hidden shadow-sm" role="group">
+  {/* segments */}
+</div>
+```
+
+### Masonry grid (`globals.css`)
+
+```css
+.masonry-grid { column-gap: 1rem; }
+.masonry-item { break-inside: avoid; margin-bottom: 1rem; }
+```
+
+```tsx
+<div className="masonry-grid columns-1 sm:columns-2 lg:columns-3">
+  {/* items */}
+</div>
+```
+
+Uniform grid: `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4` with `aspect-[4/3]` image frames.  
+List/case-study: horizontal row — thumbnail + title + description.
+
+### Image card (card-as-button)
+
+Cards are **buttons** or links — not nested cards. Image hover only; keep copy minimal.
+
+```tsx
+<button className="masonry-item w-full text-left group rounded-2xl overflow-hidden bg-white dark:bg-surface-800 shadow-md hover:shadow-xl transition-all border border-surface-200 dark:border-surface-700">
+  <img className="w-full object-cover group-hover:scale-[1.02] transition-transform duration-300" loading="lazy" />
+  <div className="p-4">
+    <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Title</h4>
+    <p className="mt-1 text-sm text-surface-600 dark:text-surface-300 leading-relaxed line-clamp-2">…</p>
+  </div>
+</button>
+```
+
+- Featured label (short status only): `text-xs font-medium uppercase tracking-wide text-app-accent-text`
+- Prefer `rounded-2xl` on visual cards (slightly softer than admin `rounded-xl`)
+
+### Lightbox
+
+Full-screen `bg-black/90`, keyboard ←/→/Esc, image `max-h-[75vh] object-contain`. No likes, comments, or social chrome.
+
+### Admin gear (signed-in only)
+
+On visual-app **public browse** toolbars only: admin entry may use **slot 3** (`Settings` icon) when the brief requires visible admin access. Otherwise admin lives in the **slot 4 ellipsis menu**. Links to `/admin` with `addTokenToUrl`; `aria-label` from i18n.
+
+### Admin forms — simplified inputs
+
+Visual-app **admin CRUD** may use a shared `.input` utility instead of floating labels when forms are long or upload-heavy:
+
+```css
+.input {
+  @apply w-full px-4 py-2.5 rounded-xl border border-surface-300 dark:border-surface-600
+    bg-white dark:bg-surface-700 text-gray-900 dark:text-white shadow-sm
+    focus:ring-2 focus:ring-app-accent focus:border-app-accent outline-none;
+}
+```
+
+Use **floating labels** on short public-facing forms; **`.input` + label above** on admin item/settings screens.
+
+### Image upload field
+
+Pattern: **preview → upload button → URL fallback** (never `alert()` / `confirm()`).
+
+```tsx
+{/* Preview with remove */}
+{/* Primary: Upload image — POST multipart to /api/upload/image */}
+{/* Secondary: text input for pasted URL */}
+```
+
+- Cover: single `ImageUploadField`
+- Gallery: multi-upload grid + textarea for URL list
+- Profile/logo: same as cover, `folder="profile"`
+
+### Visual app checklist
+
+- [ ] Public home = browse grid (not dashboard, not hero)
+- [ ] Category pills + layout modes (masonry / grid / list)
+- [ ] Lightbox for item detail / gallery
+- [ ] Dual theme on cards, toolbar, lightbox, admin
+- [ ] Admin gear visible only when JWT present
+- [ ] i18n for all labels including `aria-label` on icon controls
+- [ ] Lazy-load images (`loading="lazy"`)
+- [ ] No nested cards; borders + spacing separate admin sections
+

@@ -1,0 +1,153 @@
+---
+description: Real-time sockets — ws.vtc.com relay vs chat.vtc.com; env vars, rooms, Socket.IO patterns
+alwaysApply: false
+---
+
+# Real-Time Communication — VTC
+
+Env conventions: `env-development.mdc`. Do not hardcode URLs.
+
+## Two servers (do not mix them up)
+
+| Server | Public URL | Use for |
+|--------|------------|---------|
+| **Generic realtime relay** | `wss://ws.vtc.com` | Live app updates, games, collab, any non-chat pub/sub |
+| **Chat server** | `https://chat.vtc.com` | DMs, group chat, unread counts, typing, chat uploads; **shell bell** live fan-out (`notification:new`) — `shell-notifications.mdc` |
+
+- **`ws.vtc.com`** → the VTC realtime relay — simple Socket.IO room relay (`join-room`, `event`). No MongoDB, no chat REST API.
+- **`chat.vtc.com`** → full chat-server (JWT, MongoDB, `new-message`, `/rooms/unread-counts`). Used by **posif-svelte** via `PUBLIC_CHAT_SERVER_URL`.
+
+Do **not** add `sockets.posif.com` — `ws.vtc.com` is the canonical public hostname.
+
+## When to use which
+
+| Building | Connect to | Env var |
+|----------|------------|---------|
+| Next.js app realtime (kanban, newsfeed, games, etc.) | `ws.vtc.com` | `NEXT_PUBLIC_WS_URL` |
+| Server-side emit from API routes | Internal relay | `SOCKET_IO_URL` |
+| Static Vite app (builder) live updates | `ws.vtc.com` — token on connect, "record changed" pings only | none (address in code) |
+| posif-svelte shell / child apps with chat API | `chat.vtc.com` | `PUBLIC_CHAT_SERVER_URL` |
+
+**Default for new VTC apps with realtime:** `ws.vtc.com` + rooms. **Never** point app realtime at `chat.vtc.com` unless you are implementing chat.
+
+## Environment variables
+
+Add to `env_development` for local dev. **Production** values for `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_SOCKET_IO_PATH`, `SOCKET_IO_URL`, and `PUBLIC_CHAT_SERVER_URL` are **platform-injected** at deploy (`deployment.mdc`) — do not commit in app `.env.production`.
+
+| Variable | Client-safe? | Example (prod) | Purpose |
+|----------|--------------|------------------|---------|
+| `NEXT_PUBLIC_WS_URL` | Yes | `wss://ws.vtc.com` | Browser Socket.IO URL |
+| `NEXT_PUBLIC_SOCKET_IO_PATH` | Yes | `/socket.io` | Socket.IO path (default) |
+| `SOCKET_IO_URL` | No — server only | `(platform-injected internal URL)` | API routes emitting to relay (injected; vRack → server1) |
+| `PUBLIC_CHAT_SERVER_URL` | Yes | `https://chat.vtc.com` | Chat REST API — shell (SvelteKit) and child Next.js apps (`realtime.mdc`) |
+
+Child Next.js apps: read `process.env.PUBLIC_CHAT_SERVER_URL`; expose to the client bundle via `env: { PUBLIC_CHAT_SERVER_URL: process.env.PUBLIC_CHAT_SERVER_URL }` in `next.config` when needed.
+
+Dev (games + LobbyNet — shared relay):
+
+```bash
+NEXT_PUBLIC_WS_URL=https://ws.vtc.com
+```
+
+Launch from VTC dev section so `?token=` is in the URL; persist to localStorage; pass JWT on Socket.IO connect (`auth.token`). **No** local ws Docker for day-to-day dev. **No** `dev-secret` or env JWT fallbacks.
+
+Prod server-side emit from API routes may still use internal `SOCKET_IO_URL` (e.g. `the injected internal URL`) — never expose that to the browser.
+
+Expose browser config via `/api/socketio/public` when the client should not read env directly — see reference apps below.
+
+## ws.vtc.com relay API (generic apps)
+
+- **Default namespace only** — connect to `wss://ws.vtc.com`, not `wss://ws.vtc.com/group-123`.
+- **Rooms for isolation** — e.g. `group-{groupId}`, `lobby-{id}`, `game-{code}`.
+- **Join:** `socket.emit('join-room', roomId)` — `roomId` is a plain string.
+- **Structured broadcast:** `socket.emit('event', { roomId, type, payload, echo?: boolean })`.
+- **Listen:** `socket.on(type, handler)` for event types your app defines.
+
+```typescript
+import { io } from 'socket.io-client'
+
+const socket = io(process.env.NEXT_PUBLIC_WS_URL, {
+  path: process.env.NEXT_PUBLIC_SOCKET_IO_PATH || '/socket.io',
+  transports: ['websocket', 'polling'],
+  auth: { token }, // when your app passes JWT
+})
+
+socket.on('connect', () => {
+  socket.emit('join-room', `group-${groupId}`)
+})
+```
+
+Server-side emit from API routes:
+
+```typescript
+import { io } from 'socket.io-client'
+
+const socket = io(process.env.SOCKET_IO_URL!, { transports: ['websocket', 'polling'] })
+socket.emit('event', { roomId: `group-${groupId}`, type: 'item-updated', payload: data })
+```
+
+## Static Vite apps (builder, S3 deploy) — "record changed" pattern
+
+Static apps **may** use `wss://ws.vtc.com` for live updates, on these conditions:
+
+1. **Address in code**: static builds get no injected env. Use `import.meta.env.VITE_WS_URL || 'https://ws.vtc.com'`
+   (the template helper `src/lib/live.ts` already does this). Never an internal IP, never `VITE_SOCKET_IO_*`.
+2. **Send the user's login token on connect**: `io(url, { auth: { token: getAuthToken() } })`. The relay
+   rejects connections without a valid JWT. Signed out → no socket; fall back to polling.
+3. **Broadcast only a "record changed" signal**, never the record itself:
+   `socket.emit('event', { roomId, type: 'record-changed', payload: { collection, id, kind, at } })`.
+   No names, emails, amounts, message text or other fields — any signed-in user can join a room.
+4. **Re-read through ZAPI** on every signal (`vtcFetch` / collection helpers with the user's token), so
+   ZAPI permissions still decide what each user sees.
+5. **Rooms** per record set, e.g. `{app}-{entity}-{parentId}` (`resto-orders-{restaurantId}`). Join after `connect`.
+6. **Polling fallback**: while not connected, re-read every 15–30 s (visible tab only); slow poll (60 s) when connected.
+7. Emit after the ZAPI write succeeds; a failed emit never blocks or fails the write.
+
+```typescript
+import { useLiveRecords, emitRecordChanged } from '@/lib/live'
+
+// listener (staff list): re-read on every signal; poll while disconnected
+const { connected } = useLiveRecords(`shop-orders-${shopId}`, () => reloadOrders())
+
+// writer: after the ZAPI create/update succeeded
+emitRecordChanged(`shop-orders-${shopId}`, { collection: 'shop_orders', id: order.id, kind: 'created' })
+```
+
+Reference: `~/apps/resto_new` (`src/lib/orderLive.ts`, `socketEmit.ts`, `useSocketIO.ts`, `components/StaffOrders.tsx`).
+
+## Chat server (posif-svelte only)
+
+Chat uses a **different** protocol — do not reuse ws relay patterns:
+
+- REST + Socket.IO on `PUBLIC_CHAT_SERVER_URL`
+- Events: `join-room`, `send-message`, `new-message`, etc.
+- Headers: `Authorization`, `x-group-id`, `x-network-id`
+- Implementation: `posif-svelte` → `src/lib/features/chat/`
+
+**Child apps linking to network chat** (DM with a user) use **shell routes**, not `chat.vtc.com`:
+
+- `/dashboard/chat/with/{userId}` — find/create DM (`userId` = JWT `user_id`)
+- `/dashboard/chat/{roomId}` — open existing room
+
+Full contract: `app-integration.mdc` → *Platform chat deep links*. Env: `NEXT_PUBLIC_PLATFORM_URL`.
+
+## Reference implementations
+
+Before inventing a new socket client:
+
+1. `~/games/chess` — JWT + ws.vtc.com client and server-side broadcast
+2. `~/games/lobbynet` — lobby room updates
+3. `~/apps/newsfeed` — `lib/socket-server.ts`, `/api/socketio/public`
+4. `~/apps/kanban/GUIDE.md` — `NEXT_PUBLIC_WS_URL` usage
+
+Lobby multiplayer: see `multi-user-games.mdc`.
+
+## AI checklist (realtime feature)
+
+1. Confirm this is **not** chat → use `ws.vtc.com`, not `chat.vtc.com`
+2. Add env vars to `env_development` + `.env.production`
+3. Pass JWT on connect — token from VTC shell `?token=` / localStorage, not hardcoded env
+4. Rooms-based isolation; no custom Socket.IO namespaces
+5. Copy socket config API pattern from `newsfeed` if browser needs runtime URL
+6. Server emits: JWT from request when using shared relay; prod may use internal `SOCKET_IO_URL` — never expose internal IP to client
+7. Multiplayer via LobbyNet → read `multi-user-games.mdc` first

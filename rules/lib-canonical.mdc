@@ -1,0 +1,96 @@
+---
+description: Required lib module exports and signatures
+alwaysApply: false
+globs: "**/lib/**/*.ts"
+---
+
+# Canonical Lib Modules — VTC Apps
+
+Auth flow: `auth-bootstrap.mdc`. JWT claims: `auth-jwt-reference.mdc`.
+
+## `jwt.ts`
+
+```typescript
+export type AuthenticatedUser = { /* see auth-jwt-reference.mdc */ }
+export function decodeJwt(token: string): AuthenticatedUser | null
+export function getTokenFromRequest(request: Request): string | null
+```
+
+Reject expired tokens. Validate URL `user` === `user_id` and URL `group` === `group_id`.
+
+`decodeJwt` is for display only (names, role badges in the browser). It does not check the
+signature, so it must never decide access on the server.
+
+## `auth.ts`
+
+```typescript
+// Server only. Confirms the token with the VTC API before trusting any claim.
+export async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticatedUser | null>
+export function isOwner(user: AuthenticatedUser): boolean   // role_type === "1"
+export function isAdmin(user: AuthenticatedUser): boolean    // role_type "1" or "2"
+```
+
+Implement it with `@vtc/auth`: `getAuthenticatedUser(request, { requireVerified: true })`
+(GET `/api/v1/auth/verify` with the Bearer token, cached briefly). Always `await` it — an
+un-awaited call is a Promise, so `if (!user)` would let every request through. Details:
+`auth-jwt-reference.mdc` → Server verification.
+
+## `clientAuth.ts`
+
+Required exports — full signatures in `auth-bootstrap.mdc`. Accent persistence: `ui.mdc`.
+
+```typescript
+const TOKEN_KEY = 'posif_token'
+const MODE_KEY = 'posif_mode'
+const COLOR_KEY = 'posif_color'
+const LANG_KEY = 'posif_lang'
+
+export function bootstrapAuthFromUrl(): void
+export function preserveThemeParams(): void
+export function getPersistedThemeParams(): { mode?: string; color?: string; lang?: string }
+export function getAuthToken(): string | null
+export function addTokenToUrl(url: string): string
+```
+
+| Function | Purpose |
+|----------|---------|
+| `bootstrapAuthFromUrl` | URL → `posif_token`, `posif_user`, `posif_group` |
+| `preserveThemeParams` | URL `mode` / `color` / `lang` → `posif_mode` / `posif_color` / `posif_lang` |
+| `getPersistedThemeParams` | Read theme keys when query params are stripped |
+| `addTokenToUrl` | Re-append `token`, `user`, `group`, `mode`, `color`, `lang` (URL or persisted) |
+
+**Also required:** `src/lib/accent.ts` (or `accentColor.ts`) with `resolveAccentColor()` — handles `#hex`, bare hex, and named colors (`green`, `blue`, …). Reference: `~/apps/lists`.
+
+**Do not** ship a `clientAuth.ts` that only appends `token` (or `token` + `lang`) — space accent will not survive token strip or in-app navigation.
+
+## `mongodb.ts`
+
+```typescript
+export function connectDB(user: AuthenticatedUser): Promise<Db>
+// MONGODB_DEV_URI (localhost) in dev; MONGODB_URI in production
+```
+
+## `db.ts`
+
+```typescript
+export async function getDbWithAuth(request: NextRequest): Promise<{ db: Db; user: AuthenticatedUser }>
+export async function getDbOptionalAuth(request: NextRequest): Promise<{ db: Db | null; user: AuthenticatedUser | null }>
+```
+
+Shared vs Dedicated branching — `architecture.mdc`.
+
+When the app declares **Personal** (`app-types.mdc`):
+
+```typescript
+export function getPersonalStore(request: NextRequest): {
+  store: ReturnType<typeof personalDb>
+  user: AuthenticatedUser
+  token: string
+}
+```
+
+Use `personalDb(request)` from `@vtc/sdk` ≥ 1.4.0 — **not** `getPersonalDb()`. Details: `personal-storage.mdc`.
+
+## `deepinfra.ts` (RAG only)
+
+`chatCompletion`, `embedTexts`, `rerank` — `ai-inference.mdc`.

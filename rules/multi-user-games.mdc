@@ -1,0 +1,140 @@
+---
+description: Multi-user games and LobbyNet integration — lobby contract, game-info, lobby-start, Socket.IO rooms
+alwaysApply: false
+globs:
+  - "**/api/game-info/**"
+  - "**/lobby-start/**"
+  - "**/game/**"
+---
+
+# Multi-User Games — VTC
+
+Use when building or integrating a game under `~/games/` with **LobbyNet** (global dedicated lobby) matchmaking and shared realtime.
+
+Related: `realtime.mdc` (ws.vtc.com + JWT), `auth-bootstrap.mdc` (URL `?token=`).
+
+## Architecture (three pieces)
+
+| Piece | Repo | Role |
+|-------|------|------|
+| **Lobby hub** | `~/games/lobbynet` | Global matchmaking (db_1_2), player list, start game, SSE + Socket.IO |
+| **Game app** | `~/games/{chess, poker, ...}` | Game logic, state, `/api/game-info`, `/lobby-start` |
+| **Realtime relay** | `wss://ws.vtc.com` | Room pub/sub — **not** chat.vtc.com |
+
+Games are **not** pre-registered. Lobby discovers a game when the user arrives with `?gameUrl={GAME_URL}&token={JWT}`.
+
+## Required env vars (game app)
+
+Add to `env_development` and `.env.production` — never hardcode URLs.
+
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_APP_URL` | This game's public URL (used as `gameUrl`) |
+| `NEXT_PUBLIC_LOBBY_URL` | LobbyNet URL (prod: `https://lobbynet.apps.vtc.com`; dev: `http://127.0.0.1:3012`) |
+| `NEXT_PUBLIC_WS_URL` | `https://ws.vtc.com` (shared relay; JWT required) |
+
+LobbyNet also needs `NEXT_PUBLIC_WS_URL`, Redis (`REDIS_*`), and lobby port (`3012` typical).
+
+## Integration contract (game app)
+
+### 1. Entry — redirect authenticated users to lobby
+
+On home / create-game flow, when JWT exists:
+
+```
+{NEXT_PUBLIC_LOBBY_URL}?gameUrl={encodeURIComponent(NEXT_PUBLIC_APP_URL)}&token={jwt}
+```
+
+Reference: `~/games/chess/app/page.tsx`
+
+### 2. `GET /api/game-info`
+
+Lobby fetches this to show name, limits, metadata fields. Enable CORS (`Access-Control-Allow-Origin: *`).
+
+**Required fields:**
+
+```json
+{
+  "id": "chess",
+  "name": "Chess",
+  "minPlayers": 2,
+  "maxPlayers": 2
+}
+```
+
+- `id` — stable slug; written to LobbyNet `game_registry` when present
+- `gameType` — optional alias of `id` for plugins
+- `metadataFields` — optional lobby form fields (select, number, etc.)
+
+Reference: `~/games/chess/app/api/game-info/route.ts`
+
+### 3. `/lobby-start` page
+
+Lobby redirects here when host starts:
+
+```
+{gameServerUrl}/lobby-start?lobbyId=...&players=...&metadata=...
+```
+
+- Parse `lobbyId`, player list, metadata
+- **Use `lobbyId` as the game session ID** (Redis key, Mongo id, URL segment)
+- Create game state, redirect players into the match
+
+Reference: `~/games/chess/app/lobby-start/` (or equivalent route)
+
+### 4. Re-join / spectate
+
+Support URLs like `/game/{lobbyId}` so players can return via lobby links.
+
+### 5. Realtime — Socket.IO on ws.vtc.com
+
+- **Room id = `lobbyId`** (plain string): `socket.emit('join-room', lobbyId)`
+- **JWT on connect** — from URL `?token=` → localStorage → `auth: { token }` on client
+- **Server-side broadcasts** — pass JWT from request into socket client (`getTokenFromRequest`)
+- Dev: connect to `https://ws.vtc.com` with VTC dev launcher token — **no** local ws Docker, **no** `dev-secret` fallback
+
+Reference: `~/games/chess/lib/websocket.ts`, `lib/socketio-server.ts`, `~/games/lobbynet/src/lib/socketio-client.ts`
+
+Read `realtime.mdc` before adding socket code.
+
+## LobbyNet hub (only when changing the lobby app)
+
+- Game plugins: `~/games/lobbynet/src/lib/game-plugins/`
+- Auto-register: `GET {gameUrl}/api/game-info` on lobby load (`LayoutContent` / registry)
+- Start flow: redirect to `lobby.gameServerUrl/lobby-start?...`
+- Do **not** hardcode per-game URLs — use `gameServerUrl` from the lobby object
+
+## Standalone vs lobby-integrated
+
+| Mode | Needs |
+|------|-------|
+| Standalone (no lobby) | Normal VTC child app + optional `realtime.mdc` only |
+| Lobby multiplayer | Full contract above |
+
+Do not add lobby redirects or `/api/game-info` unless the game should appear in LobbyNet.
+
+## AI checklist (new lobby game)
+
+1. Confirm game lives under `~/games/` and has `.cursor` linked to `~/games/cursor`
+2. Add env vars: `NEXT_PUBLIC_LOBBY_URL`, `NEXT_PUBLIC_WS_URL`, `NEXT_PUBLIC_APP_URL`
+3. Implement `GET /api/game-info` with `id`, `minPlayers`, `maxPlayers`
+4. Redirect home → lobby with `gameUrl` + `token`
+5. Implement `/lobby-start` — `lobbyId` = session id
+6. Socket.IO: `join-room` with `lobbyId`, JWT on client and server emits
+7. Copy auth pattern from chess: `getTokenFromRequest`, no env JWT fallback
+8. Test: launch from VTC dev section → lobby → create → start → both players in same room
+
+## Reference implementations
+
+| What | Where |
+|------|-------|
+| Full game integration | `~/games/chess` |
+| Lobby hub | `~/games/lobbynet` |
+| Chess plugin (metadata) | `~/games/lobbynet/src/lib/game-plugins/chess-integration.ts` |
+
+## Do not
+
+- Hardcode game URLs in LobbyNet (use dynamic `gameServerUrl`)
+- Use `chat.vtc.com` for game moves or lobby updates
+- Skip `id` in `game-info` if registry / leaderboards matter
+- Add `DEV_JWT_TOKEN` / `NEXT_PUBLIC_DEV_JWT_TOKEN` env fallbacks — token comes from VTC shell `?token=` only

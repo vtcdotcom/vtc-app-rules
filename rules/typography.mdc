@@ -1,0 +1,97 @@
+---
+description: Platform typography hierarchy — same semantic roles for shell, child apps, and rebuilds
+globs:
+  - "**/*.{tsx,jsx,svelte,css}"
+alwaysApply: false
+---
+
+# Typography — all VTC apps (mandatory)
+
+**One hierarchy** for shell (posif-svelte), iframe child apps (Next / Vite + `@vtc/ui`), and new rebuilds. Do not invent per-app type scales.
+
+## Semantic roles (use these names in reviews and PRs)
+
+| Role | Size / weight | Use for |
+|------|----------------|---------|
+| **caption** | `text-xs`, muted | Hints, counts, timestamps, subtext |
+| **body** | `text-sm` | Paragraphs, menu items, default list copy |
+| **label** | `text-sm font-medium` | Form labels, secondary header actions |
+| **section** | `text-sm font-semibold` | Structural headings **inside a panel** (not the active tab name) |
+| **tab-primary** | `text-sm font-semibold` | Primary tab row (Home / Apps / Members, main nav tabs) |
+| **tab-secondary** | `text-xs font-semibold` | Nested tabs under a primary tab |
+| **row-title** | `text-sm font-semibold` | List/card row titles (names, app rows) |
+| **row-meta** | `text-xs`, muted | @handle, category under a row title |
+| **overlay-title** | `text-lg font-semibold` | Modal, sheet, dialog, standalone app bar title |
+| **display-sm** / **display** | `text-xl` / `text-2xl` semibold/bold | **Marketing / public landings only** — not product shell |
+| **input-emphasis** | `text-base font-semibold` | **Native inputs only** (avoid iOS zoom-on-focus) |
+
+## Hierarchy rules (all apps)
+
+1. **In-panel structure must not exceed `section` / `tab-primary` (`text-sm` semibold)** except **overlay-title** (modals) or documented **display** / stat emphasis.
+2. **Do not repeat the active tab name** as a second heading in the same panel.
+3. **Sub-tabs** use **tab-secondary** — smaller than primary tabs.
+4. **Headings** (`h1`–`h6`) need explicit size/weight classes — never UA defaults.
+5. **No ad-hoc `text-xl` / `text-2xl` page titles** in embedded child apps; shell chrome already names the app. **Never** render the app name as a home heading or subtitle ("Your personal X") when embedded — home starts with content/actions (`ui.mdc` § Platform shell chrome). Nested screen titles are fine.
+6. **Font family:** platform system stack or network `typography=` / `font=` via `ThemeProvider` — `network-branding.mdc`, `ui.mdc` § font family.
+
+## Implementation by stack
+
+### posif-svelte (main shell)
+
+- **Spec copy in repo:** `docs/typography.md` (must match this file).
+- **CSS:** `src/lib/styles/typography.css` — classes `type-caption`, `type-body`, `type-label`, `type-section`, `type-tab-primary`, `type-tab-secondary`, `type-row-title`, `type-row-meta`, `type-overlay-title`, `type-display-sm`, `type-display`, `type-input-emphasis`.
+- Prefer `type-*` over raw Tailwind in `src/**/*.svelte`.
+
+### Next.js / static Vite + `@vtc/ui` (**required for new / rebuilt apps**)
+
+1. **`@vtc/ui` ≥ 1.3.0** in `package.json`.
+2. In `globals.css` (after Tailwind `@import`):
+
+```css
+@import "@vtc/ui/typography.css";
+```
+
+3. Use **`type-*` classes** or exported components / `typeClass`:
+
+```tsx
+import { SectionHeading, BodyText, OverlayTitle, typeClass } from '@vtc/ui'
+```
+
+| Class / `typeClass` | Role |
+|---------------------|------|
+| `type-caption` | caption |
+| `type-body` | body |
+| `type-label` | label |
+| `type-section` | section |
+| `type-tab-primary` / `type-tab-secondary` | tabs |
+| `type-row-title` / `type-row-meta` | list rows |
+| `type-overlay-title` | modals, standalone bar title |
+| `type-display-sm` / `type-display` | marketing only |
+| `type-input-emphasis` | native inputs only |
+
+Do **not** hand-compose `text-2xl` page titles. `PageTitle` in `@vtc/ui` is an alias for **overlay-title** scale.
+
+**Embedded in platform shell:** sticky header is **actions only** — use **section** inside `<main>`.
+
+### Buttons
+
+`text-sm font-medium` on button labels — `ui.mdc` § Buttons.
+
+## Weights
+
+- **semibold** — section, tabs, row titles, overlay titles.
+- **medium** — labels, default buttons.
+- **bold** — primary **Button** component and **display** marketing only.
+
+## Audit (posif-svelte)
+
+```bash
+./scripts/typography-audit.sh
+```
+
+Child apps: grep for `text-2xl`, `text-xl font-bold` on in-app headings and replace with **section** / **overlay-title** per table above.
+
+## Related rules
+
+- `ui.mdc` — App Shell, theme, accent, components (defers to this file for type hierarchy).
+- `i18n.mdc` — translated strings; no impact on scale.

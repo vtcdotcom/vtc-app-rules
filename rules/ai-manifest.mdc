@@ -1,0 +1,120 @@
+---
+description: AI tool manifest — publish-time registration and orchestration
+alwaysApply: false
+---
+
+# AI manifest — `public/.well-known/ai-manifest.json`
+
+Every integratable publisher app ships a machine-readable **AI manifest** so the VTC Guide can discover and execute app APIs with the user's JWT.
+
+Works for **both runtimes**: Next.js tools declare `http` (Guide POSTs to the app's server route); static Vite tools declare `zapi` (Guide executes against the app's ZAPI collections in-process — no server needed). Vite copies `public/` into `dist/`, so the manifest is served from static hosting unchanged.
+
+## File location
+
+```
+public/.well-known/ai-manifest.json
+```
+
+Served at `https://{code}.apps.vtc.com/.well-known/ai-manifest.json` after deploy.
+
+## Schema (v1)
+
+```json
+{
+  "schema_version": 1,
+  "module_code": "myapp",
+  "description": "One-line purpose for semantic search",
+  "tools": [
+    {
+      "name": "myapp.create_item",
+      "description": "Create a record in this app",
+      "parameters": {
+        "type": "object",
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"]
+      },
+      "http": { "method": "POST", "path": "/api/items" },
+      "permissions": ["member"],
+      "examples": ["add a new contact", "create item Fix login"]
+    }
+  ]
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `module_code` | yes | Same as app shortname |
+| `description` | recommended | Embedded for orchestration / routing |
+| `tools[].name` | yes | Prefer `{module_code}.{action}` |
+| `tools[].http` | one of | Next.js: real app route — execution uses JWT query params |
+| `tools[].zapi` | one of | Static Vite: collections target — see below |
+| `tools[].permissions` | yes | `member`, `space_admin`, `network_admin` |
+| `tools[].examples` | recommended | Natural-language phrases for embeddings |
+
+**Alternate scaffold shape** (`app` wrapper, `endpoint` + `scopes`) is normalized at register time — prefer the canonical `http`/`zapi` + `permissions` form for new apps.
+
+## `zapi` tools (static Vite apps)
+
+Static apps have no server routes, so tools target the app's collections directly. ZAPI executes them in-process with the caller's JWT — same group DB, scoping, and access rules as the app's own `/collections/*` calls.
+
+```json
+{
+  "name": "polls.add_poll",
+  "description": "Create a poll",
+  "parameters": { "type": "object", "properties": { "title": { "type": "string" } }, "required": ["title"] },
+  "permissions": ["member"],
+  "zapi": { "action": "create_document", "collection": "polls_items", "defaults": { "votes": 0 } }
+}
+```
+
+| `zapi.action` | LLM arguments | Behavior |
+|---------------|---------------|----------|
+| `create_document` | business fields | Merged over `defaults`; stamps `created_by`, `group_id`, `status: active`, timestamps when absent |
+| `list_documents` | `filter?`, `limit?` (≤50), `page?`, `sort_by?`, `sort_order?` | Equality-only filter (Mongo operators rejected); soft-deleted excluded; static `zapi.filter` merged on top |
+| `get_document` | `document_id` | Fetch one |
+| `update_document` | `document_id` + fields | Partial `$set` via atomic ops; bumps `updated_at` |
+| `apply_ops` | `document_id`, `ops`, `only_if_absent?` | Atomic `inc`/`push`/`add_to_set`/`set` — race-free votes/counters (`nextjs-to-vite.mdc`) |
+
+- `collection` must match `^[a-z][a-z0-9_]{0,63}$`; invalid `zapi` blocks fall back to `http` at normalize time — check registration output
+- No business-logic validation runs server-side beyond `parameters` — only expose write tools whose invariants the actions above can enforce (use `only_if_absent` for uniqueness)
+
+## Publish hook
+
+After a successful deploy, **generate-app** (or CI) runs:
+
+```bash
+VTC_API_URL=https://api.vtc.com \
+BUILD_INTERNAL_SECRET=... \
+python scripts/register_app_ai_manifest.py {module_code} https://{code}.apps.vtc.com
+```
+
+This:
+
+1. Fetches `/.well-known/ai-manifest.json`
+2. `POST /api/v1/ai/manifests/register` (internal secret) → Mongo `ai_tool_manifests`
+3. Syncs tool embeddings to vaultapi → Qdrant (`type: app_tool`)
+
+## Runtime flow
+
+1. **Semantic search** — Guide matches user intent to tools (installed apps only)
+2. **Structured manifest** — OpenAI tool defs + permission checks from Mongo
+3. **Execution** — `http` tools: `execution_engine` calls `{MODULE}_APP_URL` + path with `?token=&user=&group=` (`app-integration.mdc`); `zapi` tools: executed in-process against the caller's space collections
+
+## Do
+
+- Describe tools in plain language (names, descriptions, examples)
+- List only routes the app actually implements
+- Bump `schema_version` when tools change materially
+- Keep write tools behind the same auth as normal `/api/*` routes
+
+## Do not
+
+- Embed secrets, admin-only routes, or raw OpenAPI dumps in the manifest
+- Hardcode app URLs — execution resolves `{CODE}_APP_URL` from env on ZAPI
+- Skip the manifest if the app has integratable write APIs
+
+## References
+
+- Cross-app HTTP patterns: `app-integration.mdc`
+- Platform plan: `plans/vtc-ai-platform.md` (shell repo)
+- Legacy examples: kanban + suggestions manifests in ZAPI `tool_registry.py`

@@ -1,0 +1,126 @@
+---
+description: App-owned API routes — CRUD layout, handlers, response envelope
+globs: "**/api/**/route.ts"
+alwaysApply: false
+---
+
+# API Routes — VTC Apps
+
+For **platform ZAPI** calls from static Vite apps, use the catalog instead of app-owned routes: `zapi-developer-catalog.mdc` (`GET /api/v1/developer/catalog`). This file applies to **Next.js `src/app/api/`** routes only.
+
+Auth: `?token=` on every request — `auth-bootstrap.mdc`. List params: `business-patterns.mdc`. Scoping: `app-types.mdc`.
+
+## Layout
+
+```
+src/app/api/[entity]/
+  list/route.ts      GET
+  create/route.ts    POST
+  update/route.ts    PUT
+  delete/route.ts    DELETE — soft delete default
+```
+
+Always use `getDbWithAuth(request)` for Space/App data. Personal records use `personalDb()` / `getPersonalStore(request)` — `personal-storage.mdc`. Scope per app type.
+
+## Response Envelope (mandatory)
+
+```typescript
+// Success
+{ success: true, data: {...} }
+
+// Error
+{ success: false, code: "AUTH_401", error: "Human-readable message" }
+```
+
+| code | status | When |
+|------|--------|------|
+| `AUTH_401` | 401 | Missing/invalid token |
+| `AUTH_403` | 403 | Not permitted |
+| `VALIDATION_400` | 400 | Invalid fields |
+| `NOT_FOUND_404` | 404 | Missing resource |
+| `SERVER_500` | 500 | Server error |
+
+## Shared app — list (GET)
+
+```typescript
+const filter: Record<string, unknown> = {
+  group_id: user.group_id,
+  status: { $ne: 'deleted' },
+}
+if (q) {
+  filter.$or = [
+    { name: { $regex: q, $options: 'i' } },
+    { email: { $regex: q, $options: 'i' } },
+  ]
+}
+```
+
+## Personal store — list (GET)
+
+```typescript
+const { store, user } = getPersonalStore(request)
+const items = await store.collection(COLLECTION).find(
+  { status: { $ne: 'deleted' } },
+  { sort: [['updated_at', -1]], limit: 50 }
+)
+```
+
+No `group_id` / `user_id` in the filter. Dual-scope apps (`space,personal`): personal launch returns only this list; space launch merges personal + space (`personal-storage.mdc`).
+
+## Dedicated app — list (GET)
+
+```typescript
+const filter: Record<string, unknown> = { status: { $ne: 'deleted' } }
+// no group_id filter
+```
+
+## Personal store — create (POST)
+
+```typescript
+const { store, user } = getPersonalStore(request)
+await store.collection(COLLECTION).insertOne({
+  _id: nanoid(10),
+  ...bodyFields,
+  kind: 'personal',
+  group_id: '0',
+  created_by: user.user_id,
+  created_at: now,
+  updated_at: now,
+  status: 'active',
+})
+```
+
+Do not set `user_id`. Updates must be operators (`$set`). Soft-delete with `$set: { status: 'deleted' }`.
+
+## Shared app — create (POST)
+
+```typescript
+const doc = {
+  _id: nanoid(10),
+  ...bodyFields,
+  group_id: user.group_id,
+  created_by: user.user_id,
+  created_at: now,
+  updated_at: now,
+  status: 'active',
+}
+```
+
+## Delete — soft (default)
+
+```typescript
+await db.collection(COLLECTION).updateOne(
+  { _id: id, group_id: user.group_id }, // Dedicated: { _id: id } only
+  { $set: { status: 'deleted', updated_at: new Date().toISOString() } }
+)
+```
+
+## Client fetch
+
+```typescript
+const res = await fetch(addTokenToUrl('/api/items/list?limit=20&offset=0'))
+const result = await res.json()
+if (!result.success) { /* handle result.code */ }
+```
+
+External platform APIs (`via.posif.com`) may use `Authorization: Bearer` — exception to app JWT query rule.

@@ -1,0 +1,93 @@
+---
+description: Platform ratings — ZAPI /api/v1/ratings, −10…+10 slider UX, to_type user|community|item
+alwaysApply: false
+globs: "**/*{rating,Rating}*.{tsx,ts,jsx,js,svelte}"
+---
+
+# Platform ratings (ZAPI)
+
+**When:** users rate **people**, **spaces (communities)**, or **arbitrary app entities** (menus, listings, posts) with the same network-wide score the main VTC app uses.
+
+**Not this:** **App Store–style app reviews** (`app_reviews` in ZAPI) — star + text for **published apps** in the marketplace. Do not bolt custom `reviews` / 1–5-star Mongo collections onto entities that should use platform ratings.
+
+**Auth:** `auth-bootstrap.mdc` — ratings require a logged-in user JWT (`?token=` / `posif_token`). Guests may **read** aggregates you expose via your own public API; write endpoints need auth.
+
+**Spec (shell + legacy notes):** `~/apps/app/docs/network-apps-api-spec.md` §K  
+**ZAPI implementation:** `~/api/src/zapi/api/routers/ratings.py`, `~/api/src/zapi/services/ratings_service.py`
+
+---
+
+## API (canonical)
+
+Base: **`https://api.vtc.com`** + `/api/v1` (see `env-development.mdc`). Legacy `POST /ratings/addratings` → **`POST /api/v1/ratings`**.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/ratings` | Add or update the caller’s score |
+| `GET` | `/api/v1/ratings/last?to_id=&to_type=` | Caller’s last score for target |
+| `GET` | `/api/v1/ratings/summary?to_id=&to_type=` | Aggregate, count, viewer’s last score |
+
+**Body (`POST`):**
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `rating` | yes | Integer **−10 … +10** |
+| `to_id` | yes | **Numeric string** (community/user id, or app-chosen id for `item`) |
+| `to_type` | yes | `user` \| `community` \| `item` |
+
+**Success:** legacy-shaped `{ "status": "success", "result": <aggregate> }` after client unwrap (aggregate is typically shown on a **~1–10** scale with one decimal — use `formatAggregateRating`, not raw stars).
+
+**Common errors:** `to_id_not_exist`, `rating_value_should_be_between_minus_10_and_plus_10`, `to_type_should_be_user_or_community_or_item`, `rating_failed`.
+
+Use **`authFetch`** (`@vtc/client`) or the shell client pattern in posif-svelte — not app-route `Authorization` headers.
+
+---
+
+## `to_type` targets
+
+| `to_type` | `to_id` | Backend checks |
+|-----------|---------|----------------|
+| `user` | Platform user id | User must exist |
+| `community` | Space / group id | Community must exist, not deleted |
+| `item` | **Your** stable positive int | No row required — app owns id assignment |
+
+For **app-owned entities** (restaurant, product, article): persist a **`ratingTargetId`** (or equivalent) at create time. API requires an int `to_id`; do not send UUID strings.
+
+**Stable id pattern (Vite apps):** `stableRatingTargetId(seed)` — FNV-style hash into `1 … 2_000_000_000` — see `~/apps/food/src/lib/vtcRatings.ts`. Use one seed per entity (e.g. internal restaurant id) and **never change** it after ratings exist.
+
+---
+
+## Slider UX (match the shell)
+
+Canonical UI: **−10 … +10** stepped slider, red → neutral → green track, large numeric readout, Save / Cancel.
+
+| Piece | Location |
+|-------|----------|
+| Panel component | `~/apps/app/src/lib/components/rating/RatingSliderPanel.svelte` |
+| Helpers | `~/apps/app/src/lib/utils/rating-slider.ts` — `coerceSliderRating`, `getRatingSliderBackground`, `formatAggregateRating` |
+| API client | `~/apps/app/src/lib/api/people.api.ts` — `addRating`, `getLastRating` |
+| Response normalizers | `~/apps/app/src/lib/api/ratings-response.ts` |
+
+**React / Vite child apps:** port the slider markup + helpers (Food Places: `VtcRatingSlider.tsx`, `ratingSlider.ts`) or extract shared UI later — **do not** ship a separate 1–5 star widget for the same platform scores unless product explicitly asks (space About uses the **slider**, not stars).
+
+Display aggregate as **`formatAggregateRating(value)`** (`7.2`, em dash when missing). Filters like “7+” compare against the **aggregate**, not the user’s −10…+10 input.
+
+---
+
+## Integration checklist
+
+1. **Read** aggregate (and optional count) on detail/list — from your entity payload, `GET /ratings/summary`, or denormalized field updated after save.
+2. **Write** only when `getAuthToken()` is set; show sign-in copy that matches shell behaviour.
+3. **Pre-fill** slider via `GET /ratings/last` before opening the panel.
+4. **After save**, refresh aggregate from `POST` `result` or re-fetch summary.
+5. **i18n** all labels (`i18n.mdc`) — no hardcoded “Rate this place”.
+6. **Do not** duplicate scores in a private Mongo `reviews` collection if ZAPI ratings are the source of truth.
+
+---
+
+## Reference implementations
+
+| App | Notes |
+|-----|--------|
+| posif-svelte | `SpaceAboutMeta.svelte`, `MemberDetailView.svelte` — `to_type` `community` / `user` |
+| Food Places | `~/apps/food` — `to_type: item`, `ratingTargetId` on restaurant, `RestaurantRatingBlock.tsx` |

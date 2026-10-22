@@ -1,0 +1,92 @@
+---
+description: Required screens, App Shell layouts, UI states — functional apps, no default dashboard
+globs: "**/*.tsx"
+alwaysApply: false
+---
+
+# UX Screens & States — VTC Apps
+
+Visual styling: `ui.mdc` (App Shell, **Typography Standard**). Business list behavior: `business-patterns.mdc`. Landing: `landing-page.mdc`.
+
+## Screen Philosophy
+
+- Apps should be **functional first** — user opens the app to do a task, not read a summary.
+- **Do not add a dashboard** unless the brief clearly needs KPIs/summary or the user asks.
+- Default authenticated entry: **primary list** or **primary task screen** (e.g. today’s bookings, invoice list).
+- **Use the standard App Shell** on every authenticated screen — sticky header with **header action slots**, responsive container (`ui.mdc`), standard nav. Do not invent custom navigation patterns (sidebars, bottom tabs, bottom action bars, hamburger menus, FABs).
+- **Desktop lists must not use 450px width** — default `max-w-[900px]` unless the screen is form-focused.
+
+## Page Templates (App Shell)
+
+| Page type | Container | Layout | Reference |
+|-----------|-----------|--------|-----------|
+| **List / task home** | `max-w-[900px]` | App Shell header + search/filters + list | Below |
+| **Admin / create / edit** | `450px` short forms · `900px` standard editors | Header slots + form + collapsible panels | `ui.mdc` |
+| **Public content / detail** | `max-w-[760px]` | Top actions + hero + title/metadata + body | `ui.mdc` |
+| **Visual / grid browse** | `max-w-[1100px]`–`1200px` | Toolbar + grid/masonry | `ui.mdc` |
+| **Promotional landing** | — | No App Shell — marketing layout | `landing-page.mdc` |
+
+### Articles app
+
+| Screen | Container |
+|--------|-----------|
+| Article list | `max-w-[900px]` |
+| Article detail | `max-w-[760px]` |
+| Article editor | `max-w-[900px]` |
+
+**Admin entry:** ellipsis menu item by default — never plain text links or text menus in the top bar (`ui.mdc`).
+
+## Minimum Screen Set (CRUD entity)
+
+| Screen | Route (example) | Required |
+|--------|-----------------|----------|
+| Promotional landing | `/` | Yes — `landing-page.mdc` |
+| List | `/items` or `/` when list is home | Yes |
+| Create | `/items/new` or modal | Yes |
+| Edit | `/items/[id]/edit` or modal | Yes |
+| Detail | `/items/[id]` | Optional — use when read-only view helps |
+
+**Dashboard** — omit unless user or brief requires it.
+
+## Required UI States (Every Data Screen)
+
+Implement all four — do not ship a blank screen while loading or on failure.
+
+| State | When | Pattern |
+|-------|------|---------|
+| **Loading** | Initial fetch / submit | Skeleton or spinner; button `disabled` + loading label |
+| **Empty** | Success, zero records | Illustration/message + primary CTA (e.g. “Create first item”) |
+| **Error** | `success: false` or network fail | Inline banner or message; retry action |
+| **No results** | Search/filter returned 0 | Distinct from empty — “No matches for …” + clear filters |
+
+## List Screen
+
+- Container: **`max-w-[900px]`** (standard CRUD default) — not `450px`
+- **Search** input (debounced fetch with `q`)
+- **Filters** when status or category matters (tabs or dropdown → API params)
+- App Shell sticky header — **embedded (default):** no app name (platform chrome shows it); **standalone:** app title in bar. Embedded home has **no app-name heading or subtitle** (no "Your personal X") — first element is content or a primary action (`ui.mdc` § Platform shell chrome). Header action slots — `ui.mdc` **Header action slots**
+- Page title in `<main>`: `text-2xl font-bold text-gray-900 dark:text-white` — not in top bar
+- Create via **header slot 1** (`Plus`); search/filter via **slot 2** — `ui.mdc` **Header action slots**
+
+## Create / Edit
+
+- **Admin/edit layout** — `ui.mdc`: header slots (slot 1 = Save) + form + collapsible panels — no bottom bar
+- Same form component where possible; mode from route or prop
+- Floating-label inputs (`ui.mdc`)
+- Cancel via `BackButton`; no `confirm()`
+
+## Detail / Public Content
+
+- Container: **`max-w-[760px]`** (reading tier)
+- **Public content layout** — `ui.mdc`: top action row, optional hero, title/metadata, body
+- Use when read-only view or article-like content helps; optional route `/items/[id]`
+
+## Navigation
+
+- Preserve `token`, `mode`, `lang` via `addTokenToUrl()` (`auth-bootstrap.mdc`)
+- `BackButton` on nested screens only — not on list home
+- No custom nav chrome — stay within App Shell patterns
+
+## i18n
+
+No hardcoded user-visible strings — keys in `src/locales/en.json` (+ `es`, `pt` stubs when scaffolding). See `i18n.mdc`.

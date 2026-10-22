@@ -1,0 +1,92 @@
+---
+description: App data storage scopes (Space / Publisher / Personal, legacy Shared vs Dedicated) — SDK, query scoping, publish visibility
+alwaysApply: true
+---
+
+# App Types — Data Storage (Space / Publisher / Personal)
+
+**Current UI labels (publish modal "Data Storage"):** an app declares a **capability set** of storage scopes. **Space** and **Publisher** are mutually exclusive (per-space silo vs one publisher-space DB). **Personal** combines with **Space** only.
+
+CSV token for Publisher stays **`app`** (do not rename stored values or ZAPI tokens).
+
+| Storage scope (UI) | CSV token | Data lives in | Old name |
+|--------------------|-----------|---------------|----------|
+| **Space** | `space` | Per-space silo `db_{group_id}_2` — multi-tenant | Shared |
+| **Publisher** | `app` | Publisher space DB `db_{owner_id}_2` — same records for every space | Dedicated / "App" |
+| **Personal** | `personal` | Bucketed shard DBs `personal_{cluster}_{bucket}` via SDK `personalDb()` (API proxy, `@vtc/sdk` ≥ 1.4.0) | (new) |
+
+Stored as CSV in `group_apps.data_storage` (e.g. a tasks app = `space,personal`). Product sets: `space`, `app` (Publisher), `personal`, `space,personal`. At least one scope required.
+
+**Publisher** is not spaceless — it uses the **publisher space** as the single shared store (`connectDB()` / `db_{owner_id}_2`). That is why Space and Publisher are exclusive. **Personal** combines with Space only (album, tasks). Do not create `app,personal`: Publisher/`app` apps can list on Personal apps via **Available in** without Personal storage.
+
+Legacy fields `hosting_billable` / `deployment_model` still exist for pod-hosting billing — do not conflate them with storage.
+
+**Legacy terms:** "Shared" ≈ Space storage; "Dedicated" / older UI **"App"** ≈ Publisher storage; older docs may say "group app" / "publisher app". The sections below use the legacy Shared/Dedicated names for the Space/Publisher storage rules — they still apply unchanged.  
+**Spaces:** UI term; always `group_id` in code and JWT.
+
+## Personal storage — rules
+
+Full implementation: **`personal-storage.mdc`**.
+
+- User-scoped data, independent of any space; available even at `group=0` (personal context).
+- Access via SDK `personalDb()` (`@vtc/sdk` ≥ 1.4.0) — a fetch-based client for `/api/v1/db/personal/{find,count,insert,update,delete}`; works server-side **and** in the browser. Data lives in shared bucket DBs (`user_id % 256`), so there is no personal Mongo URI — the proxy enforces `user_id` server-side and stamps it on writes.
+- Never set or filter `user_id` yourself (updates touching it are rejected); no `group_id` filter needed; still exclude `status: 'deleted'` where you soft-delete.
+- Operator updates only (`$set`, `$push`, …); find pages cap at 200 docs (default 50).
+- `getPersonalDb()` (direct `Db` for `db_{user_id}_1`) is deprecated for app data — legacy AI-stack silo only. Never build per-user Mongo URIs by hand.
+- Billing: apps launched in personal context are metered to the **user's** wallet, not a space owner.
+- **Owner-only.** Other users cannot read `personalDb()`. Sharing requires a publisher share index — `personal-storage.mdc`.
+- Dual-scope (`space,personal`): personal launch = personal CRUD only; space launch lists personal + space.
+
+DB wiring: `architecture.mdc`. Document fields: `data-model.mdc`. Product context: `product-start.mdc`.
+
+## The Difference Is Storage, Not UI
+
+| | **Shared app** | **Dedicated app** |
+|---|----------------|-------------------|
+| **Publish UI** | Shared — multi-tenant | Dedicated — private deployment |
+| **Database** | **Per-space silo** when `group_id !== '0'` in production | One **fixed** database for the app |
+| **Credentials** | Resolved via `GET /api/v1/db/` + SDK `getDb()` | Injected at publish; `connectDB()` only |
+| **SDK** | **Required** in production for tenanted access | **Not required** — never `getDb()` |
+| **Who owns data** | The **active space** | The **app publisher** |
+| **Across spaces** | Isolated data per space | Same records for every space |
+| **Typical use** | CRM, inventory, bookings, space workflows | Price lists, catalogs, shared game defs |
+
+## Decision Tree
+
+1. Must **each space see only its own records** in separate storage? → **Space** (Shared app)
+2. Should **all spaces see the same publisher-maintained data**? → **Publisher** (token `app`, Dedicated)
+3. Must records **follow the user** across spaces and work at `group=0`? → **Personal**, or **Space + Personal** if there is also a per-space silo (`personal-storage.mdc`). Do not add Personal onto **Publisher**.
+4. Unsure? Ask the user. Default to **Space** only when per-space tenancy is explicit in the brief. Personal is additive to Space — never a substitute for a space silo, and never paired with Publisher.
+
+## Shared App — Rules
+
+- Production + `group_id !== '0'`: **`getDb(request)`** via SDK (`VTC_API_URL` → `/api/v1/db/`).
+- Localhost dev (`MONGODB_URI` contains `localhost`): **`connectDB(user)`** only — `architecture.mdc`.
+- **Every query** on space-owned collections: filter **`group_id: user.group_id`** and exclude `status: 'deleted'`.
+- Use `isAdmin` / `isOwner` for destructive or space-wide actions.
+- Members (`role_type` `"3"`+): restrict writes to own records where appropriate.
+
+## Dedicated App — Rules
+
+- Always `connectDB(user)` — **never** SDK `getDb()`.
+- Scope by business rules, not `group_id` on documents (often no `group_id` field).
+- JWT may still carry `group_id` for UI context — **do not** switch databases per space.
+- Env: `MONGODB_URI` points at the publisher's fixed DB.
+
+## Publish Visibility (shell only)
+
+Developer picks **Data Storage** (where records live), **Available in** (Space / Personal homes — `group_apps.available_in`), and catalog **Access** (Space / Network / Platform). Storage CSV is `group_apps.data_storage` (Publisher token = `app`). Access is hidden only when Available in Space is unchecked — `personal-storage.mdc`. Do not implement catalog gates in app code.
+
+## Examples
+
+**Shared (Space):** CRM contacts (always the Space Core Record `suite_clients` — `core-records.mdc`), stock per warehouse, member directory, room bookings.  
+**Publisher (token `app`, Dedicated):** price lists, product catalogs, publisher news, cross-space learning modules.  
+**Personal / dual-scope:** personal notes; tasks or albums with a personal library plus space records.
+
+## Anti-Patterns
+
+- ❌ Shared app using only `connectDB()` in production for tenanted data
+- ❌ Dedicated app calling `getDb()` or manual per-space silos
+- ❌ Shared app list/update without `group_id` filter
+- ❌ Personal records in a space silo, or `getPersonalDb()` / `db_{user_id}_1` for new app data
+- ❌ Assuming a dashboard — start at the primary task screen

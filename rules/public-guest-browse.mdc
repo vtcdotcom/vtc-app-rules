@@ -1,0 +1,87 @@
+---
+description: Public website guest browse — no JWT, group URL context, read-only vs auth screens
+alwaysApply: false
+globs: "**/lib/*guest*.ts,**/lib/*Guest*.ts,**/lib/clientAuth.ts,**/lib/client-auth-bootstrap.ts,**/app/page.tsx,**/api/**/public/**/route.ts"
+---
+
+# Public Guest Browse — VTC Apps
+
+Shell embed (website theme): `auth-bootstrap.mdc`. Promotional landing: `landing-page.mdc`. API layout: `api-routes.mdc`.
+
+## When this applies
+
+The VTC shell opens the app **without** `?token=` when the dashboard pin has `public_guest_access=yes` (or `hosting_platform=external`). The shell passes space context only:
+
+```
+https://{appshortname}.apps.vtc.com/?g=1205&network=42&lang=en&mode=light&color=...
+```
+
+(`group=1205` is equivalent; shell embeds prefer `g`.)
+
+| Param | Guest meaning |
+|-------|----------------|
+| `group` or `g` | Space `group_id` — **scope public reads only** (`g` short alias; equivalent) |
+| `network` | Network id — UI / links only |
+| `mode`, `color`, `lang` | Theme/i18n — preserve on client navigation |
+
+## Entry routing (`app/page.tsx`)
+
+```text
+token present (URL or storage)     → authenticated app home
+no token + valid `group` or `g` param       → public browse screen (NOT promotional landing)
+no token + no `group` / `g`           → promotional landing (landing-page.mdc)
+```
+
+**Do not** send unauthenticated visitors with `?group=` to the VTC promotional landing.
+
+## Client bootstrap
+
+On mount, always read and persist `group` or `g` (and `network`, `lang`, `mode`, `color`) even when `token` is absent.
+
+```typescript
+// Persist guest context — separate from posif_token
+if (group && group !== '0') localStorage.setItem('posif_group', group)
+```
+
+Public API fetches append `?g=` or `?group=` when no token. Never append fake `user` for writes.
+
+## API split (Next.js apps)
+
+| Route | Auth | Purpose |
+|-------|------|---------|
+| `GET /api/{entity}/list/public` | None — `group` query required | Read-only data safe for anonymous visitors |
+| `GET/POST /api/{entity}/list`, `create`, `update`, `delete` | `getDbWithAuth` / JWT required | Members only |
+
+Public list handlers:
+
+1. Parse `group` or `g` from query; reject missing, `0`, or non-numeric.
+2. Connect DB via `connectGuestDb(groupId)` — direct `db_{groupId}_2` on publisher cluster (`~/apps/products` pattern); localhost may use dev URI + `group_id` filter.
+3. Filter **`group_id` / `groupId`** + `status != deleted`.
+4. Apply **public visibility** only (e.g. `feedVisibility: public`, `allow_public_catalog: true`).
+5. Never expose drafts, member-only fields, or PII.
+
+Shared apps: production guest reads use direct tenant DB name when `MONGODB_URI` reaches the shard — same as catalog. Do **not** call `connectTenantDb()` without JWT.
+
+Static SPAs: public reads call **ZAPI** endpoints designed for anonymous access; no same-origin `/api/*`.
+
+## UI rules
+
+- **Browse** (feed, catalog, empty cart): works without token when public settings allow.
+- **Write** (post, add to cart, checkout, settings): require JWT — show in-app CTA (“Sign in to continue”), link to space login URL from shell; no `auth.posif.com` form in the app.
+- Hide composer, admin, and member-only controls in guest mode.
+- No realtime socket rooms for guests unless explicitly public.
+
+## Shell admin
+
+Space admins enable **Public guest browse** on a dashboard pin (`public_guest_access`). External apps are always guest-capable. Internal apps need this flag **and** app-level public routes.
+
+## Security
+
+- URL `group` is a **hint for public read scope**, not proof of membership.
+- Never trust `user=0` for authorization.
+- Writes always require valid JWT (`access-control.mdc`).
+
+## Reference pilots
+
+- `~/apps/newsfeed` — `GET /api/posts/list/public`, guest `/newsfeed`
+- `~/apps/products` — `GET /api/catalog/public/*`, guest `/catalog?g=`
