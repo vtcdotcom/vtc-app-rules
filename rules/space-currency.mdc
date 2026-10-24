@@ -1,0 +1,93 @@
+---
+description: Space default currency — read it on first load, use it for every price; never hard-code a currency
+alwaysApply: false
+globs: "**/*{price,Price,currency,Currency,money,Money,amount,Amount,checkout,Checkout,invoice,Invoice,listing,Listing}*.{tsx,ts,jsx,js,svelte}"
+---
+
+# Space default currency
+
+> **Status:** beta only (`beta.vtc.com`). Goes live pending Mark's approval. Build against it now; do not assume it exists in production yet.
+
+Every **Space** (code: `group_id`, table `communities`) and every **network** has a default currency. Apps use it for prices. Apps do not pick their own.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `communities.default_currency` | ISO 4217 code (`EUR`, `INR`, `USD`) | May be empty → inherit |
+| `communities.default_currency_locale` | BCP 47 locale (`es-ES`, `en-IN`) | Optional; formatting locale |
+
+**Inheritance:** Space → network → platform (`USD`). The API returns the resolved value and where it came from, so apps never walk the chain themselves.
+
+## Rules
+
+1. **Read it on first load.** Before you render a price, a price input or a form default, resolve the Space currency. Use it for every price field, every form default and all display formatting.
+2. **Never hard-code a currency.** No `'USD'` (or any other code or symbol) as a default, fallback, initial state or schema default. If you have no value yet, show a loading state. Do not guess.
+3. **Store amount + code.** Every stored price is `{ amount, currency }`, with `currency` an ISO 4217 code. Never put a currency symbol inside text (`"$12"`, `"12 €"`) in data, i18n strings or labels.
+4. **Format with the locale.** `new Intl.NumberFormat(locale, { style: 'currency', currency }).format(amount)`, with `locale` = `default_currency_locale` when set, else the user's UI locale (`i18n.mdc`). Do not build symbols or decimal separators by hand.
+5. **App override only when genuinely needed.** An app may offer its own currency (app-level setting or per-listing) only when the product really needs it, for example a marketplace listing priced in the seller's currency. The Space default stays the fallback and the initial value of that override.
+6. **Apps never write the Space currency.** It is a Space admin setting (see Writes below).
+
+## Source of truth (read)
+
+```
+GET {VTC_API_URL}/api/v1/groups/{id}/currency
+```
+
+```json
+{
+  "result": {
+    "default_currency": "EUR",
+    "default_currency_locale": "es-ES",
+    "default_currency_source": "space",
+    "can_edit": false
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `default_currency` | Resolved ISO 4217 code (never empty in the response) |
+| `default_currency_locale` | Resolved locale, may be empty |
+| `default_currency_source` | `space` \| `network` \| `platform` — where the value came from |
+| `can_edit` | Whether the caller may change it (only a Space admin on a platform session) |
+
+The same fields are also returned top-level on:
+
+- `GET /api/v1/groups/{id}` (signed-in group read)
+- `GET /groups/{id}/public-website` (anonymous — guest browse, `public-guest-browse.mdc`)
+
+### Launch token claims (first paint only)
+
+The app launch token (`?token=`, `auth-jwt-reference.mdc`) carries `default_currency`, `default_currency_source` and `default_currency_locale`. These are a **launch-time snapshot**: fine for first paint, but they can be stale if an admin changes the currency while the app is open. Re-read the endpoint when accuracy matters (before saving a price, creating an invoice or a checkout, or on app resume).
+
+## SDK helpers
+
+In the VTC packages (`vtc-packages.mdc`), branch `india/space-currency` — **not yet published** to `npm.vtc.com`. Until they ship, call the endpoint directly with the same behaviour.
+
+| Helper | Use |
+|--------|-----|
+| `getDefaultCurrency()` | Reads `GET /api/v1/groups/{id}/currency` for the current Space |
+| `defaultCurrencyFromClaims(claims)` | First-paint value from the launch token claims |
+| `resolveAppCurrency(appOverride, spaceDefault)` | Returns the app/listing override when set, else the Space default |
+
+```ts
+// first paint from the token, then confirm from the API
+let currency = defaultCurrencyFromClaims(claims);
+currency = await getDefaultCurrency();
+const code = resolveAppCurrency(listing.currency, currency.default_currency);
+```
+
+## Writes (not for apps)
+
+```
+PUT /api/v1/groups/{id}/currency
+```
+
+Only Space (group) admins on a **platform session** (shell Settings) can write it. **App tokens get `403`.** Apps must not call it, must not show an edit control for the Space currency, and must not treat `can_edit` as a reason to try. Link admins to the shell settings instead.
+
+## Do not
+
+- Hard-code `'USD'`, `'$'` or any currency as a default or fallback
+- Store formatted price strings or symbols in data or i18n strings
+- Walk Space → network → platform inheritance in app code (the API resolves it)
+- Trust the token claims for a save, invoice or checkout without re-reading the endpoint
+- Call `PUT /api/v1/groups/{id}/currency` from an app
