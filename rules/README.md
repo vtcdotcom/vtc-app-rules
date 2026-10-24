@@ -83,7 +83,7 @@ Closed decisions (a label, a yes/no, a score) use Jev in ZAPI — `jev-decisions
 
 ### Prices / money / currency
 
-`space-currency.mdc` → `i18n.mdc` → `auth-jwt-reference.mdc` — read the Space default currency on first load (`GET /api/v1/groups/{id}/currency`); store amount + ISO 4217 code; never hard-code `USD`. Beta only for now.
+`space-currency.mdc` → `i18n.mdc` → `auth-jwt-reference.mdc` — read the Space default currency on first load (`GET /api/v1/groups/{id}/currency`); store amount + ISO 4217 code; never hard-code `USD`.
 
 ### Network branding / accent
 
@@ -125,7 +125,7 @@ Closed decisions (a label, a yes/no, a score) use Jev in ZAPI — `jev-decisions
 | `maps.mdc` | no | MapTiler / platform tiles |
 | `realtime.mdc` | no | ws.vtc.com |
 | `ratings.mdc` | no | ZAPI ratings API |
-| `space-currency.mdc` | globs | Space default currency — read on first load, amount + ISO 4217, no hard-coded `USD` (beta) |
+| `space-currency.mdc` | globs | Space default currency — read on first load, amount + ISO 4217, no hard-coded `USD` |
 | `multi-user-games.mdc` | no | LobbyNet + ws relay |
 | `ai-manifest.mdc` | no | `public/.well-known/ai-manifest.json` |
 | `ai-inference.mdc` | no | ZAPI AI proxy |

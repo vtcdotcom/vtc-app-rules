@@ -6,8 +6,6 @@ globs: "**/*{price,Price,currency,Currency,money,Money,amount,Amount,checkout,Ch
 
 # Space default currency
 
-> **Status:** beta only (`beta.vtc.com`). Goes live pending Mark's approval. Build against it now; do not assume it exists in production yet.
-
 Every **Space** (code: `group_id`, table `communities`) and every **network** has a default currency. Apps use it for prices. Apps do not pick their own.
 
 | Field | Type | Notes |
@@ -61,19 +59,19 @@ The app launch token (`?token=`, `auth-jwt-reference.mdc`) carries `default_curr
 
 ## SDK helpers
 
-In the VTC packages (`vtc-packages.mdc`), branch `india/space-currency` — **not yet published** to `npm.vtc.com`. Until they ship, call the endpoint directly with the same behaviour.
+Published in `@vtc/sdk` `^1.6.1` on `npm.vtc.com` (`vtc-packages.mdc`); `GET /api/v1/groups/{id}/currency` is live in production.
 
 | Helper | Use |
 |--------|-----|
-| `getDefaultCurrency()` | Reads `GET /api/v1/groups/{id}/currency` for the current Space |
+| `sdk.getDefaultCurrency()` | Reads `GET /api/v1/groups/{id}/currency` for the current Space |
 | `defaultCurrencyFromClaims(claims)` | First-paint value from the launch token claims |
-| `resolveAppCurrency(appOverride, spaceDefault)` | Returns the app/listing override when set, else the Space default |
+| `resolveAppCurrency(appOverride, spaceDefault)` | Returns the app/listing override when set, else `spaceDefault.currency` |
 
 ```ts
 // first paint from the token, then confirm from the API
-let currency = defaultCurrencyFromClaims(claims);
-currency = await getDefaultCurrency();
-const code = resolveAppCurrency(listing.currency, currency.default_currency);
+let spaceDefault = defaultCurrencyFromClaims(claims);
+spaceDefault = await sdk.getDefaultCurrency();
+const code = resolveAppCurrency(listing.currency, spaceDefault);
 ```
 
 ## Writes (not for apps)
