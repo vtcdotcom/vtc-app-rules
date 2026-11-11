@@ -48,7 +48,7 @@ Source: `PLATFORM_INJECTED_ENV_KEYS` + mirrors in `get_platform_injected_env()` 
 | `STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` | Server URL rewrite (`storage.mdc`) |
 | `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` | Browser display URLs |
 | `VITE_STORAGE_PUBLIC_BASE_URL` | same | Auto-mirrored — static Vite |
-| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://maps.vtc.com/styles/basic-preview/style.json` | Self-hosted / platform map style (Next.js) |
+| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://tiles.vtc.com/styles/basic-preview/style.json` | Self-hosted / platform map style (Next.js) |
 | `VITE_MAP_STYLE_URL` | same | Auto-mirrored — static map apps |
 | `MAPTILER_API_KEY` | (build server secret) | MapTiler Cloud — server reference |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | same | Auto-mirrored — Next.js browser |
@@ -181,7 +181,7 @@ Required for every Next.js app:
 | `PUBLIC_CHAT_SERVER_URL` | `https://chat.vtc.com` |
 | `NEXT_PUBLIC_NETWORK_URL` | `https://app.vtc.com` |
 | `NEXT_PUBLIC_VTC_URL` | `https://vtc.com` |
-| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://maps.vtc.com/styles/basic-preview/style.json` — local dev without MapTiler key |
+| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://tiles.vtc.com/styles/basic-preview/style.json` — local dev without MapTiler key |
 | `STORAGE_PUBLIC_BASE_URL` | LAN MinIO IP — match `DEV_LAN_HOST` |
 | `USE_LOCAL_STORAGE`, `HETZNER_*` / `MINIO_*` | Local MinIO only |
 

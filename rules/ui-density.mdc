@@ -1,0 +1,15 @@
+---
+description: Always-on UI density essentials — section row, titles, header, stats, QA widths (full text in ui.mdc)
+alwaysApply: true
+---
+
+# UI density — always on (summary of `ui.mdc` § In-app navigation, titles and stats)
+
+For any screen work also read `ui.mdc`, `typography.mdc` and `ux-screens.mdc`.
+
+- **Sections:** at most **4** primary sections in **one non-wrapping row** (`.vtc-segment` or `.vtc-tabs`). The rest (Settings, Dashboard, Templates, …) go in the header **⋮**. **Settings is never a tab.** Never wrap tabs onto a second row; no bottom tab bar.
+- **Titles:** no page title that repeats the app name or the active tab; embedded home has **no title block**. Nested screens: short title at overlay-title scale, never `text-2xl`.
+- **Header:** never an empty bar — with no back button and no actions, render no header. When it shows: **52px** `.vtc-header`, **44px** targets, ⋮ always the last control. Never `h-16`.
+- **Stats:** 2-column `.vtc-stat-grid` of compact `.vtc-stat` tiles (one- or two-word label + `.vtc-stat__value`); never full-width cards stacked one per row on a phone.
+- **Text:** very little — no captions under controls or stats; hide empty sections; empty screen = `.vtc-empty` with one action.
+- **QA:** 390, 360 and **320** wide, light and dark. Needs `@vtc/ui` ≥ 1.7.0 and `@import "@vtc/ui/base.css"`.

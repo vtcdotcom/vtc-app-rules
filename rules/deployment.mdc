@@ -159,7 +159,7 @@ Set in **`/opt/generate-app/.env`** on **server2** (`build.vtc.com`). Injected v
 | `STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` — server URL rewrite (`storage.mdc`) |
 | `NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL` | `https://s3.vtc.com` — browser display |
 | `VITE_STORAGE_PUBLIC_BASE_URL` | same — auto-mirrored for static Vite |
-| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://maps.vtc.com/styles/basic-preview/style.json` |
+| `NEXT_PUBLIC_MAP_STYLE_URL` | `https://tiles.vtc.com/styles/basic-preview/style.json` |
 | `VITE_MAP_STYLE_URL` | same — auto-mirrored for static map apps |
 | `MAPTILER_API_KEY` | MapTiler Cloud — mirrored to `NEXT_PUBLIC_*` / `VITE_*` |
 | `MAPTILER_STYLE_URL` | `https://api.maptiler.com/maps/streets-v2/style.json?key={key}` — mirrored to browser vars |

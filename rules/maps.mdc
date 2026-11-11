@@ -57,7 +57,7 @@ Production Locations app uses **MapTiler** `streets-v2` — reliable fonts, glyp
 |---------|----------|--------|
 | Browser | `NEXT_PUBLIC_MAPTILER_API_KEY` | Platform inject |
 | Browser | `NEXT_PUBLIC_MAPTILER_STYLE_URL` | Platform inject |
-| Browser | `NEXT_PUBLIC_MAP_STYLE_URL` | Platform inject — `maps.vtc.com` style |
+| Browser | `NEXT_PUBLIC_MAP_STYLE_URL` | Platform inject — `https://tiles.vtc.com/styles/basic-preview/style.json` (`maps.vtc.com` is the Locations UI; its `/styles/` path is 404) |
 | Browser | `NEXT_PUBLIC_TILE_STYLE_URL` | `https://tiles.vtc.com/styles/basic-preview/style.json` (optional local dev) |
 
 Use `maplibre-gl` (not Mapbox GL). Import CSS: `maplibre-gl/dist/maplibre-gl.css`.

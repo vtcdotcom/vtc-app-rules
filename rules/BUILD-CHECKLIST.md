@@ -38,7 +38,7 @@ Human-readable companion to the Cursor rules in this folder. For AI routing deta
 - [ ] Create/edit UI with validation, loading, empty, error states
 - [ ] UI polish: Tailwind v4, light + dark, sticky header (**no app name in header when shell-embedded** — `ui.mdc`)
 - [ ] **No app name anywhere when shell-embedded** — not in the header, not as the home heading/`pageTitle`, not in a home subtitle ("Your personal X"). Home starts with content/actions; nested screen titles OK; signed-out landing + direct tab unchanged. `@vtc/ui` ≥ 1.4.0 in the lockfile.
-- [ ] `~/cursor_rules/scripts/check-embedded-app-name.sh .` → `PASS`, then open from `app.vtc.com/<module>` at 390×844 and confirm the iframe shows no app name (`ui.mdc` § Verify)
+- [ ] `~/cursor_rules/scripts/check-embedded-app-name.sh .` → `PASS`, then open from `app.vtc.com/<module>` at 390×844 (then 360 and 320) and confirm the iframe shows no app name (`ui.mdc` § Verify)
 
 ---
 
@@ -116,7 +116,9 @@ Human-readable companion to the Cursor rules in this folder. For AI routing deta
 - [ ] Top bar: **embedded** — action slots only (no app name; platform chrome shows title). **Standalone** — app name left. No text nav, headings, or labeled buttons — screen titles in page body
 - [ ] Home screen (embedded): no app-name heading or subtitle — first thing is content or a primary action
 - [ ] Admin/settings in ellipsis menu by default — never plain text link in top bar
-- [ ] **Typography Standard** — platform type scale; no custom fonts; page titles in `<main>` (`ui.mdc`)
+- [ ] **Typography Standard** — platform type scale; no custom fonts; no `text-2xl` page titles, no title repeating the app name or active tab (`ui.mdc`, `typography.mdc`)
+- [ ] **Sections, header, stats** — ≤ 4 primary sections in one non-wrapping `.vtc-segment`/`.vtc-tabs` row (Settings in ⋮, never a tab); no empty header (52px `.vtc-header` only when it has back/actions; ⋮ last); stats in a 2-column `.vtc-stat-grid` (`ui.mdc` § In-app navigation, titles and stats)
+- [ ] **Viewport QA** — verify at **390, 360 and 320** wide, light and dark: no wrapping tabs, no cut-off tiles, no horizontal page scroll
 - [ ] **VTC packages** — `.npmrc` points at `npm.vtc.com`; developers run `npm adduser --registry https://npm.vtc.com` once; CI uses `NPM_VTC_PASSWORD_B64` (`vtc-packages.mdc`)
 - [ ] Floating-label inputs; no nested cards
 - [ ] Preserve `token`, `mode`, `lang` in navigation

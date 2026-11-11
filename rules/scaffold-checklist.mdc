@@ -36,7 +36,7 @@ Follow `product-start.mdc` order. Do not run `./start.sh` unless the user asks.
 9b. **AI manifest** (integratable apps) — `public/.well-known/ai-manifest.json` — `ai-manifest.mdc`
 10. **Create / edit UI** — validation, loading, empty, error states — `ux-screens.mdc`, `ui.mdc`. Dual-scope (`space,personal`): space vs personal **scope picker** on create when launched from a space — `personal-storage.mdc`
 10b. **Publish storage** — tell the user to set shell Publish → Data Storage to match the plan (`personal` / `space,personal` / `space` / Publisher=`app`). Not Publisher+Personal — Publisher already uses a publisher space. Not app code.
-11. **UI polish** — App Shell (`@vtc/ui@^1.1.1`), **`typography.mdc`** + **Typography Standard** in `ui.mdc`, Tailwind v4, light + dark, **dark mode accent contrast** (`globals.css` + `ThemeProvider` — `ui.mdc`), sticky header (**hide app name when shell-embedded** — `ui.mdc`) — `ui.mdc`
+11. **UI polish** — App Shell (`@vtc/ui@^1.6.0`), **`@import "@vtc/ui/base.css"`** + main-screen rules (`ui.mdc` § Shared base stylesheet), **`typography.mdc`** + **Typography Standard** in `ui.mdc`, Tailwind v4, light + dark, **dark mode accent contrast** (`globals.css` + `ThemeProvider` — `ui.mdc`), sticky header (**hide app name when shell-embedded** — `ui.mdc`) — `ui.mdc`
 12. **RAG / AI only** — `deepinfra.ts`, Docling — `ai-inference.mdc`
 12b. **Metered AI billing** (DeepInfra) — copy into `src/lib/`:
     - `creditsPricing.ts` — `getCreditsChargeMultiplier`, `creditsFromWholesaleUsd`, `estimateTokenWholesaleUsd` — `platform-metering.mdc`

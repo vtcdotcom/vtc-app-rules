@@ -129,7 +129,7 @@ Do **not** set `--app-accent-text` to the raw accent hue when `mode === 'dark'`.
 
 ### 3. `@vtc/ui` App Shell header
 
-Use **`@vtc/ui@^1.1.2`** (or newer). `AppShell` renders the app name with `text-app-accent dark:text-white` when **standalone**. When **embedded in the platform shell iframe**, hide the in-app app name — platform chrome shows it (`Platform shell chrome`).
+Use **`@vtc/ui@^1.7.0`** (or newer). `AppShell` renders the app name with `text-app-accent dark:text-white` when **standalone**. When **embedded in the platform shell iframe**, hide the in-app app name — platform chrome shows it (`Platform shell chrome`).
 
 Prefer a **thin wrapper** around `VtcAppShell` from `@vtc/ui` — do not fork `AppShell.tsx` unless unavoidable.
 
@@ -296,9 +296,8 @@ Use for timestamps, counts, labels, secondary metadata, and small hints.
 
 | Role | Classes |
 |------|---------|
-| Header app name (standalone only) | `text-xl font-bold text-app-accent dark:text-white truncate` |
-| Page title (list / home) | `text-2xl font-bold text-gray-900 dark:text-white` |
-| Page title (nested / form) | `text-xl font-semibold text-gray-900 dark:text-white` |
+| Header app name (standalone only) | `text-lg font-semibold text-app-accent dark:text-white truncate` |
+| Screen title (nested / form only; never on home, never repeats the active tab) | `text-lg font-semibold text-gray-900 dark:text-white` (overlay-title) |
 | Section heading | `text-lg font-semibold text-gray-900 dark:text-white` |
 | Card / list title | `text-sm font-semibold text-gray-900 dark:text-white` |
 | Body / supporting | `text-sm text-surface-600 dark:text-surface-300` |
@@ -308,7 +307,7 @@ Use for timestamps, counts, labels, secondary metadata, and small hints.
 
 ## App Shell — mandatory (all in-house VTC apps)
 
-Every authenticated screen uses the **standard App Shell** — do not invent custom navigation (sidebars, tab bars, hamburger menus) unless the brief explicitly requires it.
+Every authenticated screen uses the **standard App Shell** — do not invent custom navigation (sidebars, bottom tab bars, hamburger menus) unless the brief explicitly requires it. In-body section switching uses one non-wrapping `.vtc-segment` / `.vtc-tabs` row of at most 4 sections (§ In-app navigation, titles and stats).
 
 | Zone | Rule |
 |------|------|
@@ -343,7 +342,7 @@ The chrome is the **only** place the app name appears. When embedded, a child ap
 
 ### Use `@vtc/ui` ≥ 1.4.0 (default does the right thing)
 
-`@vtc/ui` **1.4.0** `AppShell` hides `appName` **by default** when `isEmbeddedInShell()` is true, and drops a **root** `pageTitle` that equals the app name. Nested `pageTitle` (with `backHref`) always renders.
+`@vtc/ui` **1.4.0** `AppShell` hides `appName` **by default** when `isEmbeddedInShell()` is true, and drops a **root** `pageTitle` that equals the app name. Nested `pageTitle` (with `backHref`) always renders. **1.7.0** also omits the header when it would be empty, drops a `pageTitle` equal to `activeSection`, uses a 52px `.vtc-header`, and never renders a `text-2xl` title.
 
 ```tsx
 // src/components/AppShell.tsx — thin wrapper (no embed logic needed with ui ≥ 1.4.0)
@@ -402,7 +401,7 @@ On desktop, standard list screens must **not** be constrained to mobile width.
 |-----|------|
 | List page centered in 450px on a 1920px monitor | List page at ~760–900px — comfortable reading, adequate spacing |
 
-**Minimum viewport width:** 360px. All containers: `mx-auto px-4 sm:px-6`.
+**Minimum viewport width:** 320px (QA at 390, 360 and 320, light and dark). All containers: `mx-auto px-4 sm:px-6`.
 
 **Header and page body use the same max-width** for a given screen.
 
@@ -444,26 +443,31 @@ Pass the **same container class** as the page body (`CONTAINER.standard`, etc.).
 **Standalone:**
 
 ```tsx
-<header className="sticky top-0 z-50 h-16 bg-white dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700 shadow-sm">
-  <div className={`h-full w-full ${CONTAINER.standard} mx-auto px-4 sm:px-6 flex items-center justify-between gap-3`}>
+{/* Render nothing when the bar would be empty (embedded root: no back, no name, no actions). */}
+{(showBack || !embedded || hasActions) && (
+<header className="vtc-header sticky top-0 z-50 bg-white dark:bg-surface-800 border-b border-surface-200 dark:border-surface-700">  {/* 52px bar (--vtc-header-h), 44px buttons — never h-16 */}
+  <div className={`flex-1 self-stretch w-full ${CONTAINER.standard} mx-auto px-4 sm:px-6 flex items-center justify-between gap-2`}>
     <div className="flex items-center gap-2 min-w-0">
       {showBack && <BackButton />}
       {!embedded && (
-        <h1 className="text-xl font-bold text-app-accent dark:text-white truncate min-w-0">{appName}</h1>
+        <h1 className="text-lg font-semibold text-app-accent dark:text-white truncate min-w-0">{appName}</h1>
       )}
     </div>
 
-    <div className="flex items-center gap-0.5 shrink-0">
-      {slot1 && <HeaderSlot slot={1} {...slot1} />}
-      {slot2 && <HeaderSlot slot={2} {...slot2} />}
-      {slot3 && <HeaderSlot slot={3} {...slot3} />}
-      <HeaderOverflowMenu items={overflowItems} />
-    </div>
+    {hasActions && (
+      <div className="flex items-center gap-0.5 shrink-0">
+        {slot1 && <HeaderSlot slot={1} {...slot1} />}
+        {slot2 && <HeaderSlot slot={2} {...slot2} />}
+        {slot3 && <HeaderSlot slot={3} {...slot3} />}
+        <HeaderOverflowMenu items={overflowItems} keepVisible />  {/* ⋮ always last */}
+      </div>
+    )}
   </div>
 </header>
+)}
 ```
 
-- **Root / list home (embedded):** action slots only — no back, **no app name**
+- **Root / list home (embedded):** action slots only — no back, **no app name**; with no actions at all, **no header** (never an empty bar)
 - **Root / list home (standalone):** app name on the left — no back button
 - **Nested screens:** `BackButton` + (standalone only) app name — screen title goes in **page body**, not the top bar
 - Long app names: `truncate`; do not hardcode `text-indigo-*` — use accent tokens
@@ -489,7 +493,7 @@ Use on **nested / detail views only** — in the left header cluster. **Embedded
   onClick={() => router.back()}
   aria-label={t('common.back')}
   title={t('common.back')}
-  className="inline-flex items-center justify-center w-10 h-10 p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-surface-700 shrink-0"
+  className="inline-flex items-center justify-center w-11 h-11 p-2 rounded-xl hover:bg-gray-100 dark:hover:bg-surface-700 shrink-0"
 >
   <BackIcon className="w-5 h-5" />
 </button>
@@ -528,7 +532,7 @@ Fixed positions so every VTC app feels consistent. Use the **platform icon set**
 **Slot rules:**
 
 - Use **0–3** of slots 1–3 as needed — never more than 3 visible icons before ellipsis
-- **Slot 4 is always present** on authenticated App Shell screens — even when slots 1–3 are empty, ellipsis holds settings/admin/overflow
+- **Slot 4 is always present whenever the header renders** — even when slots 1–3 are empty, ellipsis holds settings/admin/overflow, and it is always the last control. If a screen has no header actions at all and no back button, omit the header entirely (§ In-app navigation, titles and stats)
 - Map each app action to a slot — do not add a 5th header icon; put it in the ellipsis menu
 - **List home:** slot 1 = Create, slot 2 = Search or Filter, slot 3 = app context, slot 4 = ellipsis (admin, settings, …)
 - **Edit / create form:** slot 1 = Save (`Check`), slot 2/3 optional, Cancel via `BackButton`; Delete/Duplicate in ellipsis
@@ -543,7 +547,7 @@ Fixed positions so every VTC app feels consistent. Use the **platform icon set**
   title={t('common.moreActions')}
   aria-haspopup="menu"
   aria-expanded={open}
-  className="inline-flex items-center justify-center min-w-[40px] min-h-[40px] p-2 rounded-xl text-surface-600 dark:text-surface-300 hover:bg-gray-100 dark:hover:bg-surface-700"
+  className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] p-2 rounded-xl text-surface-600 dark:text-surface-300 hover:bg-gray-100 dark:hover:bg-surface-700"
   onClick={() => setOpen(v => !v)}
 >
   <MoreVertical className="w-5 h-5" />
@@ -786,8 +790,8 @@ Use App Shell + this structure. Pick container tier by form complexity:
     nested
     containerClass={CONTAINER.standard}
   />
-  <main className={`${CONTAINER.standard} mx-auto px-4 sm:px-6 py-6 text-sm text-surface-700 dark:text-surface-300`}>
-    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">{pageTitle}</h2>
+  <main className={`${CONTAINER.standard} mx-auto px-4 sm:px-6 py-4 text-sm text-surface-700 dark:text-surface-300`}>
+    {/* No page title here — the back button + shell chrome give context. Pass pageTitle to AppShell only for a short nested screen title (overlay-title scale). */}
     {/* Main form or editor — floating-label inputs */}
     <form>...</form>
 
@@ -839,15 +843,16 @@ Articles, posts, catalog items, case studies — clean **reading** layout (`max-
 Use accent tokens for primary actions — not hardcoded indigo/purple.
 
 ```tsx
-{/* Primary */}
-<button className="px-4 py-2 text-sm font-medium bg-app-accent hover:bg-app-accent-hover text-white rounded-xl shadow-md hover:shadow-lg transition-all">
-
-{/* Secondary */}
-<button className="px-4 py-2 text-sm font-medium rounded-full bg-gray-200 dark:bg-surface-700 text-gray-700 dark:text-surface-200 hover:bg-gray-300 dark:hover:bg-surface-600 transition-colors">
-
-{/* Destructive — semantic red, not accent */}
-<button className="px-3 py-1.5 text-sm font-medium bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-md hover:shadow-lg transition-all">
+<button className="vtc-btn vtc-btn--primary">     {/* at most one per screen */}
+<button className="vtc-btn vtc-btn--secondary">
+<button className="vtc-btn vtc-btn--ghost">
+<button className="vtc-btn vtc-btn--danger">      {/* destructive: semantic red, not accent */}
+{/* sizes: --sm (36px tall, 44px hit area) · default 44px · --lg 52px */}
 ```
+
+- **One button system** — `vtc-btn` variants only; no per-app button styles.
+- Mobile home: actions sit side by side (`.vtc-btn-row`) or in header slots — never a stack of full-width buttons.
+- Every hit target is at least 44×44px (header back / ⋮ buttons included); icon-only buttons use `.vtc-icon-btn`.
 
 **Do not use FABs** — primary create/add actions use **header slot 1** (`ui.mdc`).
 
@@ -909,6 +914,79 @@ Raw markup (only if `@vtc/ui` cannot be used):
 - ✅ Active: prominent accent border + ring (`ring-app-accent`)
 - ✅ Inactive: thin light grey border
 
+## Shared base stylesheet — `@vtc/ui/base.css` (required, `@vtc/ui` ≥ 1.6.0)
+
+Import the shared stylesheet once in `globals.css`; do not redefine its tokens or copy its component CSS into the app.
+
+```css
+@import "tailwindcss" source(none);
+@import "@vtc/ui/base.css";        /* --vtc-* tokens + vtc-* classes (cascade layers: app CSS still wins) */
+@import "@vtc/ui/typography.css";
+```
+
+Classes: `vtc-header`, `vtc-control-row` + `vtc-more`, `vtc-icon-btn`, `vtc-btn`, `vtc-switch`, `vtc-input`, `vtc-list`/`vtc-row`, `vtc-avatar`, `vtc-space-icon`, `vtc-tile`, `vtc-clamp-2`, `dialog.vtc-sheet`/`dialog.vtc-dialog`, `vtc-menu`, `vtc-empty`, `vtc-toasts`/`vtc-toast`, `vtc-skeleton`, `vtc-chip`, and (≥ 1.7.0) `vtc-segment`/`vtc-tabs`, `vtc-stat-grid`/`vtc-stat`/`vtc-stat__label`/`vtc-stat__value`. Long-press: `import { longPress } from '@vtc/ui/longpress'`.
+
+### Main screens (required)
+- **Design at 390×844 first**, then widen. **QA at 390, 360 and 320** in light and dark.
+- **Header and ⋮ buttons are 44px** inside a **52px** bar (`--vtc-header-h`). All touch targets ≥ 44×44px.
+- **No captions under controls.** The label says what it does; longer help lives in the ⋮ menu or the app wiki.
+- **⋮ sits inline at the end of the control row** (`.vtc-control-row > .vtc-more`), never on a row of its own.
+- **On/off settings are switches** — `<input type="checkbox" role="switch" class="vtc-switch">` with its label on the same row. No bare checkboxes.
+- **No internal labels or status chips** — never "Space 1", raw ids, or BETA/ALPHA chips on main screens. Show the Space name, or nothing.
+- **No "None" placeholders** — hide sections that have no content; never print "None", "—" or "N/A". A fully empty screen uses `.vtc-empty` with one call to action.
+- **Shapes:** people are circles (`vtc-avatar`); Spaces, networks and app icons are rounded squares (`vtc-space-icon`, `vtc-tile__icon`).
+- **Tiles:** names use `.vtc-tile__label` (wraps to 2 lines, then clamps) — never single-line `truncate`. Every tile icon has a fallback letter (`data-initial`), and an SVG glyph takes the tile text colour (`--tile-fg`), so a glyph is never invisible on its own tile.
+- **Sheets and dialogs are native `<dialog>`** opened with `showModal()`, so Escape closes them; close on backdrop tap; `vtc-sheet` pads the safe-area insets. No hand-rolled fixed `<div>` overlays.
+- **A long-press never also fires a tap** — wire long-press with `longPress()` from `@vtc/ui/longpress`.
+- **Contrast in both themes:** WCAG AA in light and dark (text 4.5:1, icons and controls 3:1); check dark mode on every screen.
+- **Reduced motion and RTL:** honour `prefers-reduced-motion`; use logical properties (`ms-`/`me-`, `start`/`end`, `inline-size`) so `dir="rtl"` mirrors correctly. Allow ~40% longer strings.
+
+## In-app navigation, titles and stats (required)
+
+Child apps open inside the VTC shell, which already has a chrome bar (single ×, app name, tools) and a platform bottom bar. Do not build a second app-name header, a second bottom nav, or a title that repeats either the shell name or the active section. Needs `@vtc/ui` ≥ 1.7.0 (`AppShell` + `base.css` classes below).
+
+### Section navigation
+- At most **four** primary sections, in a **single non-wrapping row**: a segmented control (`.vtc-segment`) or text tabs (`.vtc-tabs`), at the top of `<main>`. Mark the active item `aria-current="page"`.
+- Everything else — Settings, Templates, Dashboard, Mentors, overflow sections — goes in the header **⋮**, inline at the end of the control/header row. **Settings is never a primary tab.**
+- If the sections cannot fit in one row at **320px**, move items into ⋮ until they do. **Never wrap tabs onto a second or third row.** Do not use a scrolling wrap as a substitute; a short horizontal scroll of the segment row is acceptable only if the active item stays fully visible.
+- Do not add a bottom tab bar. The platform shell already has one.
+- Filter tabs (status/category on a list) are not primary IA: use a compact segmented control or a dropdown, still one row.
+
+```tsx
+<nav className="vtc-segment" aria-label={t('nav.sections')}>
+  {sections.map((s) => (
+    <button key={s.id} aria-current={s.id === active ? 'page' : undefined} onClick={() => setActive(s.id)}>{t(s.label)}</button>
+  ))}
+</nav>
+```
+
+### Titles
+- **No page title that repeats the active tab or the shell app name.** Embedded home has no title block — first paint is content or a primary action. Pass `activeSection` to `AppShell` so a `pageTitle` equal to it is dropped.
+- Nested screens may have a short screen title in `<main>` at **section** or **overlay-title** scale, never `text-2xl`. (Only public reading pages — an article or catalog item title — may use a larger title.)
+- Do not leave an empty header region. If the child App Shell header would have no back button, no app name (embedded), and no slot/⋮ actions, **do not render the header** (`@vtc/ui` ≥ 1.7.0 `AppShell` does this). When any header actions exist, ⋮ (slot 4) is always the last control in that bar.
+- Child header height is **44px** touch targets inside a **52px** bar (`.vtc-header` / `--vtc-header-h`). Do not use `h-16`.
+
+### Stats
+- KPI/summary numbers on a phone belong in a **2-column grid** (`.vtc-stat-grid`) of compact tiles (`.vtc-stat`): short label (one or two words, `.vtc-stat__label` / `type-caption`) and a number (`.vtc-stat__value`, one size — do not invent `text-2xl`/`text-3xl`).
+- Do not stack full-width stat cards one per row at ≤390px. Four metrics = a 2×2. More than four: show the four that matter; the rest belong on a nested screen, not a Dashboard tab that duplicates Home.
+- A Dashboard screen is still omitted unless the brief requires analysis beyond these tiles.
+
+```tsx
+<div className="vtc-stat-grid">
+  <div className="vtc-stat"><span className="vtc-stat__label">{t('stats.active')}</span><span className="vtc-stat__value">{active}</span></div>
+  <div className="vtc-stat"><span className="vtc-stat__label">{t('stats.overdue')}</span><span className="vtc-stat__value">{overdue}</span></div>
+</div>
+```
+
+### Density
+- Main screens: very little text. No explanatory captions under controls or under stats. Hide empty sections.
+- Design and QA at **390, 360 and 320**, light and dark. 320 is in scope.
+
+### Shared CSS (`@vtc/ui/base.css` ≥ 1.7.0)
+- `.vtc-segment` / `.vtc-tabs` — one row, non-wrapping, 44px hit targets, active segment uses `--app-accent`; optional trailing ⋮ (`.vtc-icon-btn.vtc-more`).
+- `.vtc-stat-grid` — `grid-template-columns: 1fr 1fr` at phone width; 4 columns from 640px.
+- `.vtc-stat` — compact tile, no heavy shadow; label + value; zero state is `0`, not an empty card.
+
 ## Cards — Never Nested
 
 ```tsx
@@ -929,19 +1007,18 @@ Raw markup (only if `@vtc/ui` cannot be used):
 ## Modal Pattern
 
 ```tsx
-<div onClick={() => setIsOpen(false)} className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-  <div onClick={e => e.stopPropagation()} className="bg-white dark:bg-surface-800 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
-    {/* content */}
-  </div>
-</div>
+// Native <dialog> + showModal(): Escape and focus handling come from the browser.
+<dialog ref={ref} className="vtc-sheet" onClose={onClose}
+  onClick={e => { if (e.target === ref.current) ref.current.close(); }}>
+  {/* content */}
+</dialog>
 ```
 
 ## Avatar
 
 ```tsx
-<div className="w-12 h-12 bg-app-accent rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-md">
-  JD
-</div>
+{/* People: circle. Spaces / networks / apps: rounded square (vtc-space-icon, vtc-tile__icon). */}
+<span className="vtc-avatar">JD</span>
 ```
 
 ---

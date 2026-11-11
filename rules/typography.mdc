@@ -27,8 +27,8 @@ alwaysApply: false
 
 ## Hierarchy rules (all apps)
 
-1. **In-panel structure must not exceed `section` / `tab-primary` (`text-sm` semibold)** except **overlay-title** (modals) or documented **display** / stat emphasis.
-2. **Do not repeat the active tab name** as a second heading in the same panel.
+1. **In-panel structure must not exceed `section` / `tab-primary` (`text-sm` semibold)** except **overlay-title** (modals, short nested screen titles). Stat numbers use `.vtc-stat__value` (one size, `@vtc/ui/base.css`) — not `text-2xl`/`text-3xl` (`ui.mdc` § In-app navigation, titles and stats).
+2. **Do not repeat the active tab name** (or the app name) as a heading — no page title that echoes the active section. Primary sections: at most 4 in one non-wrapping `.vtc-segment` / `.vtc-tabs` row; Settings is never a tab (`ui.mdc` § In-app navigation, titles and stats).
 3. **Sub-tabs** use **tab-secondary** — smaller than primary tabs.
 4. **Headings** (`h1`–`h6`) need explicit size/weight classes — never UA defaults.
 5. **No ad-hoc `text-xl` / `text-2xl` page titles** in embedded child apps; shell chrome already names the app. **Never** render the app name as a home heading or subtitle ("Your personal X") when embedded — home starts with content/actions (`ui.mdc` § Platform shell chrome). Nested screen titles are fine.
@@ -71,7 +71,7 @@ import { SectionHeading, BodyText, OverlayTitle, typeClass } from '@vtc/ui'
 
 Do **not** hand-compose `text-2xl` page titles. `PageTitle` in `@vtc/ui` is an alias for **overlay-title** scale.
 
-**Embedded in platform shell:** sticky header is **actions only** — use **section** inside `<main>`.
+**Embedded in platform shell:** sticky header is **actions only** (and omitted when there are none) — use **section** inside `<main>`. QA type at 390, 360 and 320, light and dark.
 
 ### Buttons
 

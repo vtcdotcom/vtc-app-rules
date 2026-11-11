@@ -55,7 +55,7 @@ Implement all four — do not ship a blank screen while loading or on failure.
 | State | When | Pattern |
 |-------|------|---------|
 | **Loading** | Initial fetch / submit | Skeleton or spinner; button `disabled` + loading label |
-| **Empty** | Success, zero records | Illustration/message + primary CTA (e.g. “Create first item”) |
+| **Empty** | Success, zero records | `.vtc-empty`: icon, one short line, one primary CTA. Empty sub-sections are hidden — never “None” or “—” |
 | **Error** | `success: false` or network fail | Inline banner or message; retry action |
 | **No results** | Search/filter returned 0 | Distinct from empty — “No matches for …” + clear filters |
 
@@ -63,9 +63,10 @@ Implement all four — do not ship a blank screen while loading or on failure.
 
 - Container: **`max-w-[900px]`** (standard CRUD default) — not `450px`
 - **Search** input (debounced fetch with `q`)
-- **Filters** when status or category matters (tabs or dropdown → API params)
+- **Filters** when status or category matters (one-row segmented control or dropdown → API params; never wrapping tabs)
 - App Shell sticky header — **embedded (default):** no app name (platform chrome shows it); **standalone:** app title in bar. Embedded home has **no app-name heading or subtitle** (no "Your personal X") — first element is content or a primary action (`ui.mdc` § Platform shell chrome). Header action slots — `ui.mdc` **Header action slots**
-- Page title in `<main>`: `text-2xl font-bold text-gray-900 dark:text-white` — not in top bar
+- **No page title on the list home** — never one that repeats the app name or the active tab. Nested screens only: short title at overlay-title scale, never `text-2xl`
+- **Sections:** at most 4 primary sections in one non-wrapping `.vtc-segment` / `.vtc-tabs` row; Settings and the rest go in header ⋮; stats in a 2-column `.vtc-stat-grid` — `ui.mdc` § In-app navigation, titles and stats
 - Create via **header slot 1** (`Plus`); search/filter via **slot 2** — `ui.mdc` **Header action slots**
 
 ## Create / Edit
@@ -85,7 +86,9 @@ Implement all four — do not ship a blank screen while loading or on failure.
 
 - Preserve `token`, `mode`, `lang` via `addTokenToUrl()` (`auth-bootstrap.mdc`)
 - `BackButton` on nested screens only — not on list home
-- No custom nav chrome — stay within App Shell patterns
+- No custom nav chrome — stay within App Shell patterns. In-body sections: one non-wrapping row, max 4 (`ui.mdc` § In-app navigation, titles and stats)
+- No empty header bar — `@vtc/ui` ≥ 1.7.0 `AppShell` omits it when there is no back button and no action
+- QA every screen at **390, 360 and 320**, light and dark
 
 ## i18n
 
