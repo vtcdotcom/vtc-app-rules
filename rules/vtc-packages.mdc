@@ -71,7 +71,7 @@ npm install @vtc/sdk @vtc/client @vtc/ui @vtc/i18n
   "dependencies": {
     "@vtc/sdk": "^1.0.0",
     "@vtc/client": "^1.2.2",
-    "@vtc/ui": "^1.7.0",
+    "@vtc/ui": "^1.7.1",
     "@vtc/i18n": "^1.0.0"
   }
 }
@@ -122,7 +122,7 @@ Add `"plugins": ["@vtc/native"]` so prebuild grants `com.vtc.SESSION`. See `scaf
 @import "@vtc/ui/typography.css";
 ```
 
-`@vtc/ui` ≥ **1.3.0** for shared `type-*` classes — `typography.mdc`. `@vtc/ui` ≥ **1.4.0** required for embedded app-name hiding — `ui.mdc`. `@vtc/ui` ≥ **1.6.0** for the shared `@vtc/ui/base.css` stylesheet and `@vtc/ui/longpress` — `ui.mdc` § Shared base stylesheet. `@vtc/ui` ≥ **1.7.0** for `.vtc-segment`/`.vtc-tabs`, `.vtc-stat-grid`/`.vtc-stat`, the no-empty-header `AppShell` and `activeSection` — `ui.mdc` § In-app navigation, titles and stats. (1.7.0 is on the `next` dist-tag until Mark promotes it: pin `^1.7.0` explicitly.)
+`@vtc/ui` ≥ **1.3.0** for shared `type-*` classes — `typography.mdc`. `@vtc/ui` ≥ **1.4.0** required for embedded app-name hiding — `ui.mdc`. `@vtc/ui` ≥ **1.6.0** for the shared `@vtc/ui/base.css` stylesheet and `@vtc/ui/longpress` — `ui.mdc` § Shared base stylesheet. `@vtc/ui` ≥ **1.7.0** for `.vtc-segment`/`.vtc-tabs`, `.vtc-stat-grid`/`.vtc-stat`, the no-empty-header `AppShell` and `activeSection` — `ui.mdc` § In-app navigation, titles and stats. `@vtc/ui` ≥ **1.7.1** for `AppShell sections` (actions inline in the section row) and the portalled ⋮ menu. (1.7.x is on the `next` dist-tag until Mark promotes it: pin `^1.7.1` explicitly.)
 
 Reference implementation: **`~/apps/jobs`**.
 

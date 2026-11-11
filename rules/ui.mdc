@@ -943,7 +943,7 @@ Classes: `vtc-header`, `vtc-control-row` + `vtc-more`, `vtc-icon-btn`, `vtc-btn`
 
 ## In-app navigation, titles and stats (required)
 
-Child apps open inside the VTC shell, which already has a chrome bar (single ×, app name, tools) and a platform bottom bar. Do not build a second app-name header, a second bottom nav, or a title that repeats either the shell name or the active section. Needs `@vtc/ui` ≥ 1.7.0 (`AppShell` + `base.css` classes below).
+Child apps open inside the VTC shell, which already has a chrome bar (single ×, app name, tools) and a platform bottom bar. Do not build a second app-name header, a second bottom nav, or a title that repeats either the shell name or the active section. Needs `@vtc/ui` ≥ 1.7.1 (`AppShell` + `base.css` classes below).
 
 ### Section navigation
 - At most **four** primary sections, in a **single non-wrapping row**: a segmented control (`.vtc-segment`) or text tabs (`.vtc-tabs`), at the top of `<main>`. Mark the active item `aria-current="page"`.
@@ -951,13 +951,19 @@ Child apps open inside the VTC shell, which already has a chrome bar (single ×,
 - If the sections cannot fit in one row at **320px**, move items into ⋮ until they do. **Never wrap tabs onto a second or third row.** Do not use a scrolling wrap as a substitute; a short horizontal scroll of the segment row is acceptable only if the active item stays fully visible.
 - Do not add a bottom tab bar. The platform shell already has one.
 - Filter tabs (status/category on a list) are not primary IA: use a compact segmented control or a dropdown, still one row.
+- **One pattern on every tab:** the section row stays at the top; the screen's actions (slot 1–3, e.g. +) sit **inline at the end of that row, before ⋮**. Never a separate 52px action band above the row when embedded. Use `AppShell` `sections` / `activeSectionId` / `onSectionChange` (`@vtc/ui` ≥ 1.7.1), which renders exactly this. Standalone still shows the 52px app-name header above the row.
+- **⋮ must always paint** as a popover above content — `@vtc/ui` ≥ 1.7.1 portals it to `<body>` with fixed positioning. Never render a menu inside a scrolling/overflow container (e.g. `.vtc-segment`), and it must not cause sideways scroll at 320.
 
 ```tsx
-<nav className="vtc-segment" aria-label={t('nav.sections')}>
-  {sections.map((s) => (
-    <button key={s.id} aria-current={s.id === active ? 'page' : undefined} onClick={() => setActive(s.id)}>{t(s.label)}</button>
-  ))}
-</nav>
+<AppShell
+  sections={[{ id: 'home', label: t('nav.home') }, { id: 'lists', label: t('nav.lists') }, { id: 'people', label: t('nav.people') }]}
+  activeSectionId={active}
+  onSectionChange={setActive}
+  slot1={lists.length > 0 ? { icon: <PlusIcon />, label: t('lists.add'), onClick: openNew } : undefined}
+  overflow={[{ id: 'settings', label: t('nav.settings'), href: '/settings' }]}
+>
+  {lists.length === 0 ? <EmptyLists onAdd={openNew} /> : <ListRows items={lists} />}
+</AppShell>
 ```
 
 ### Titles
@@ -965,6 +971,9 @@ Child apps open inside the VTC shell, which already has a chrome bar (single ×,
 - Nested screens may have a short screen title in `<main>` at **section** or **overlay-title** scale, never `text-2xl`. (Only public reading pages — an article or catalog item title — may use a larger title.)
 - Do not leave an empty header region. If the child App Shell header would have no back button, no app name (embedded), and no slot/⋮ actions, **do not render the header** (`@vtc/ui` ≥ 1.7.0 `AppShell` does this). When any header actions exist, ⋮ (slot 4) is always the last control in that bar.
 - Child header height is **44px** touch targets inside a **52px** bar (`.vtc-header` / `--vtc-header-h`). Do not use `h-16`.
+
+### Empty screens
+- When a screen's list is empty, show **only** the centred `.vtc-empty` call to action (icon, one short line, one button). Do **not** also show the inline + in the row/header — the inline + (slot 1) appears only once items exist.
 
 ### Stats
 - KPI/summary numbers on a phone belong in a **2-column grid** (`.vtc-stat-grid`) of compact tiles (`.vtc-stat`): short label (one or two words, `.vtc-stat__label` / `type-caption`) and a number (`.vtc-stat__value`, one size — do not invent `text-2xl`/`text-3xl`).
