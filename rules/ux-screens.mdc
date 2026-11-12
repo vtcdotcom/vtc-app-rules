@@ -55,7 +55,7 @@ Implement all four — do not ship a blank screen while loading or on failure.
 | State | When | Pattern |
 |-------|------|---------|
 | **Loading** | Initial fetch / submit | Skeleton or spinner; button `disabled` + loading label |
-| **Empty** | Success, zero records | `.vtc-empty`: icon, one short line, one primary CTA — and **no** inline +/slot-1 create until items exist. Empty sub-sections are hidden — never “None” or “—” |
+| **Empty** | Success, zero records | `.vtc-empty`: plain subject glyph (never a + tile), one short line, one primary CTA that does the job (never a tab-switch-only button such as "Home"; none if there is nothing to do) — and **no** inline +/slot-1 create until items exist. Empty sub-sections are hidden — never “None” or “—” |
 | **Error** | `success: false` or network fail | Inline banner or message; retry action |
 | **No results** | Search/filter returned 0 | Distinct from empty — “No matches for …” + clear filters |
 

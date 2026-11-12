@@ -8,8 +8,8 @@ alwaysApply: true
 For any screen work also read `ui.mdc`, `typography.mdc` and `ux-screens.mdc`.
 
 - **Sections:** at most **4** primary sections in **one non-wrapping row** (`.vtc-segment` or `.vtc-tabs`). The rest (Settings, Dashboard, Templates, …) go in the header **⋮**. **Settings is never a tab.** Never wrap tabs onto a second row; no bottom tab bar. Screen actions (+) go **inline at the end of the section row, before ⋮** — never a separate action band (`AppShell sections`, `@vtc/ui` ≥ 1.7.1). ⋮ must visibly open as a popover above content.
-- **Titles:** no page title that repeats the app name or the active tab; embedded home has **no title block**. Nested screens: short title at overlay-title scale, never `text-2xl`.
+- **Titles:** no page title that repeats the app name or the active tab; embedded home has **no title block**. Nested screens and ⋮ subpages: **Back + short title in one row** (`AppShell backHref` + `pageTitle`, `@vtc/ui` ≥ 1.7.4), overlay-title scale, never `text-2xl`.
 - **Header:** never an empty bar — with no back button and no actions, render no header. When it shows: **52px** `.vtc-header`, **44px** targets, ⋮ always the last control. Never `h-16`.
-- **Stats:** 2-column `.vtc-stat-grid` of compact `.vtc-stat` tiles (one- or two-word label + `.vtc-stat__value`); never full-width cards stacked one per row on a phone.
-- **Text:** very little — no captions under controls or stats; hide empty sections; empty screen = `.vtc-empty` with one action, and **no inline + until items exist**.
-- **QA:** 390, 360 and **320** wide, light and dark. Needs `@vtc/ui` ≥ 1.7.1 and `@import "@vtc/ui/base.css"`.
+- **Stats:** 2-column `.vtc-stat-grid` of compact `.vtc-stat` tiles (one- or two-word label + `.vtc-stat__value`); never full-width cards stacked one per row on a phone. **Even counts** (2 or 4); a Dashboard doesn't repeat Home's tiles.
+- **Text:** very little — no captions under controls or stats; hide empty sections; empty screen = `.vtc-empty` with one action, and **no inline + until items exist**. Empty icon = plain subject glyph (never a + tile); the button does the job (no "Home"/tab-switch buttons — no action means no button).
+- **QA:** 390, 360 and **320** wide, light and dark. Needs `@vtc/ui` ≥ 1.7.4 and `@import "@vtc/ui/base.css"`.

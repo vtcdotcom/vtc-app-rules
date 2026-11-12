@@ -943,7 +943,7 @@ Classes: `vtc-header`, `vtc-control-row` + `vtc-more`, `vtc-icon-btn`, `vtc-btn`
 
 ## In-app navigation, titles and stats (required)
 
-Child apps open inside the VTC shell, which already has a chrome bar (single ×, app name, tools) and a platform bottom bar. Do not build a second app-name header, a second bottom nav, or a title that repeats either the shell name or the active section. Needs `@vtc/ui` ≥ 1.7.1 (`AppShell` + `base.css` classes below).
+Child apps open inside the VTC shell, which already has a chrome bar (single ×, app name, tools) and a platform bottom bar. Do not build a second app-name header, a second bottom nav, or a title that repeats either the shell name or the active section. Needs `@vtc/ui` ≥ 1.7.1 (`AppShell` + `base.css` classes below); ≥ 1.7.4 for Back in the subpage title row and the dark-contrast tokens.
 
 ### Section navigation
 - At most **four** primary sections, in a **single non-wrapping row**: a segmented control (`.vtc-segment`) or text tabs (`.vtc-tabs`), at the top of `<main>`. Mark the active item `aria-current="page"`.
@@ -953,6 +953,7 @@ Child apps open inside the VTC shell, which already has a chrome bar (single ×,
 - Filter tabs (status/category on a list) are not primary IA: use a compact segmented control or a dropdown, still one row.
 - **One pattern on every tab:** the section row stays at the top; the screen's actions (slot 1–3, e.g. +) sit **inline at the end of that row, before ⋮**. Never a separate 52px action band above the row when embedded. Use `AppShell` `sections` / `activeSectionId` / `onSectionChange` (`@vtc/ui` ≥ 1.7.1), which renders exactly this. Standalone still shows the 52px app-name header above the row.
 - **⋮ must always paint** as a popover above content — `@vtc/ui` ≥ 1.7.1 portals it to `<body>` with fixed positioning. Never render a menu inside a scrolling/overflow container (e.g. `.vtc-segment`), and it must not cause sideways scroll at 320.
+- **Subpages get Back in their title row.** A screen opened from ⋮ (Settings, Templates, Dashboard, Mentors…) or a nested detail/form screen passes `backHref` + `pageTitle`: `AppShell` (`@vtc/ui` ≥ 1.7.4) renders `← Title` as one row at the top of `<main>`, with that screen's actions at its end — no section row, no separate back band when embedded. The page must not render its own second title.
 
 ```tsx
 <AppShell
@@ -974,10 +975,13 @@ Child apps open inside the VTC shell, which already has a chrome bar (single ×,
 
 ### Empty screens
 - When a screen's list is empty, show **only** the centred `.vtc-empty` call to action (icon, one short line, one button). Do **not** also show the inline + in the row/header — the inline + (slot 1) appears only once items exist.
+- The icon is a **plain, non-interactive subject glyph** (passport, template, people…) in `.vtc-empty__icon` — never a `+` tile or a tinted square that looks tappable above the button. Or omit it.
+- The one button must **do the screen's job** (Add, Start, Invite). Never a button that only switches to another tab (e.g. "Home"); if the user has nothing to do here, show no button. A link to where the action happens is fine only when labelled with that action ("Start a passport").
 
 ### Stats
 - KPI/summary numbers on a phone belong in a **2-column grid** (`.vtc-stat-grid`) of compact tiles (`.vtc-stat`): short label (one or two words, `.vtc-stat__label` / `type-caption`) and a number (`.vtc-stat__value`, one size — do not invent `text-2xl`/`text-3xl`).
 - Do not stack full-width stat cards one per row at ≤390px. Four metrics = a 2×2. More than four: show the four that matter; the rest belong on a nested screen, not a Dashboard tab that duplicates Home.
+- Use an **even** count (2 or 4) so no tile sits alone in a half row; a Dashboard must not repeat Home's tiles. If a count is unavoidably odd, `@vtc/ui` ≥ 1.7.4 spans the last tile across both columns on phones.
 - A Dashboard screen is still omitted unless the brief requires analysis beyond these tiles.
 
 ```tsx
@@ -992,7 +996,8 @@ Child apps open inside the VTC shell, which already has a chrome bar (single ×,
 - Design and QA at **390, 360 and 320**, light and dark. 320 is in scope.
 
 ### Shared CSS (`@vtc/ui/base.css` ≥ 1.7.0)
-- `.vtc-segment` / `.vtc-tabs` — one row, non-wrapping, 44px hit targets, active segment uses `--app-accent`; optional trailing ⋮ (`.vtc-icon-btn.vtc-more`).
+- `.vtc-segment` / `.vtc-tabs` — one row, non-wrapping, 44px hit targets, active segment uses `--vtc-accent-fill`; optional trailing ⋮ (`.vtc-icon-btn.vtc-more`).
+- Contrast tokens (≥ 1.7.4): inactive tab labels and header icon buttons (⋮) share `--vtc-tab-fg`; filled buttons use `--vtc-accent-fill` (brighter in dark); inputs and popovers use `--vtc-border-raised`. App-local Tailwind buttons (`bg-app-accent`) should map to `--vtc-accent-fill` in dark.
 - `.vtc-stat-grid` — `grid-template-columns: 1fr 1fr` at phone width; 4 columns from 640px.
 - `.vtc-stat` — compact tile, no heavy shadow; label + value; zero state is `0`, not an empty card.
 
